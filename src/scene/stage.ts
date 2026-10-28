@@ -15,10 +15,21 @@ export class Stage {
   private defaultTarget = new THREE.Vector3();
   private camAnim: { from: THREE.Vector3; to: THREE.Vector3; tFrom: THREE.Vector3; tTo: THREE.Vector3; t: number } | null = null;
 
+  readonly lite: boolean;
+
   constructor(container: HTMLElement, modelCenter: THREE.Vector3, modelRadius: number) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    // Lite mode: software rasterizers (SwiftShader headless), automation and
+    // weak iGPUs get a cheaper pipeline (no shadows/PMREM, pixelRatio 1).
+    const forced = new URLSearchParams(location.search).get('lite') === '1';
+    const gl = document.createElement('canvas').getContext('webgl2') ?? document.createElement('canvas').getContext('webgl');
+    const rendererInfo = gl ? (gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? '') : '';
+    const software = /swiftshader|llvmpipe|software|basic render/i.test(String(rendererInfo));
+    const lite = forced || software;
+    this.lite = lite;
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: !lite, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(lite ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !lite;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -48,14 +59,17 @@ export class Stage {
     this.controls.panSpeed = 0.85;
     this.controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 
-    // environment reflections (subtle, professional studio feel)
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.5;
+    // environment reflections (subtle, professional studio feel) — skipped in
+    // lite mode: PMREM generation is expensive and pointless for software GL
+    if (!lite) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.5;
+    }
 
     const key = new THREE.DirectionalLight('#fff4e0', 2.6);
     key.position.set(modelRadius * 1.6, modelRadius * 2.2, modelRadius * -2.4);
-    key.castShadow = true;
+    key.castShadow = !lite;
     key.shadow.mapSize.set(1024, 1024);
     const d = modelRadius * 1.4;
     key.shadow.camera.left = -d; key.shadow.camera.right = d;

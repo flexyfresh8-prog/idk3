@@ -75,7 +75,9 @@ async function boot(): Promise<void> {
   const deformer = new SurroundDeformer(
     audit.surroundParts, audit.axis, audit.axisPoint, audit.rInGlobal, audit.rOutGlobal
   );
-  const outwardSign = audit.outward.z < 0 ? -1 : 1;
+  // +1/-1: converts "positive = outward excursion" into motion along the
+  // model axis (this model fires toward −Z, so outwardSign = −1).
+  const outwardSign = audit.outward.dot(audit.axis) >= 0 ? 1 : -1;
   const assembly = new ConeAssembly(audit.axis, outwardSign);
   assembly.attach(audit.movingParts);
   stage.scene.add(assembly.group);
@@ -202,25 +204,32 @@ async function boot(): Promise<void> {
   }
 
   // ------------------------------------------------------------------ loop
+  // stillMode (?still=1): render on demand only — used by automated tests and
+  // very weak devices; a manual single-frame render hook is exposed below.
+  const stillMode = new URLSearchParams(location.search).get('still') === '1';
   let last = performance.now();
   let uiAccum = 0;
+  let debugD: number | null = null; // test hook: forced static excursion (world units)
   const lastFrame = { drive: 0, bass: 0, mid: 0, high: 0, playing: false, rms: 0, peak: 0 };
 
-  function loop(now: number): void {
-    requestAnimationFrame(loop);
+  function loopBody(now: number): void {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
 
     const frame = engine.frame(dt, params.hfCutoffHz);
 
-    // drive -> excursion target (world units)
+    // drive -> excursion target (world units, signed: positive = outward)
     const maxUnits = params.maxExcursionMM * MM;
     const punchMix = 0.62 + 0.38 * engine.punch;
     const target = frame.drive * params.bassSensitivity * params.animationIntensity * punchMix * maxUnits;
-    const d = physics.update(dt, target, maxUnits * 1.12, params.smoothing);
+    const d = debugD !== null ? debugD : physics.update(dt, target, maxUnits * 1.12, params.smoothing);
 
+    // Both the moving assembly and the surround field use the same signed
+    // outward displacement, so the cone rim and the surround inner edge stay
+    // perfectly in register (no gap / no shear). The deformer works directly
+    // in model-axis units, hence the outwardSign conversion.
     assembly.setDisplacement(d, params.coilFollow);
-    deformer.apply(d, params.surroundStrength);
+    deformer.apply(d * outwardSign, params.surroundStrength);
     inspector.updateHighlight(dt);
 
     lastFrame.drive = frame.drive;
@@ -239,9 +248,19 @@ async function boot(): Promise<void> {
       player.drawSpectrum(lastFrame.playing ? frame.spectrum : null, engine.sampleRate);
     }
 
-    stage.tick(dt);
+    if (!stillMode) stage.tick(dt);
   }
-  requestAnimationFrame(loop);
+  function loop(now: number): void {
+    requestAnimationFrame(loop);
+    loopBody(now);
+  }
+  if (!stillMode) requestAnimationFrame(loop);
+  else {
+    last = performance.now();
+    loopBody(performance.now());
+    stage.tick(1 / 60);
+    (window as any).__simRenderOnce = () => { loopBody(performance.now()); stage.tick(1 / 60); };
+  }
 
   // ------------------------------------------------------------------ test hook (used by automated browser tests)
   (window as any).__sim = {
@@ -263,6 +282,30 @@ async function boot(): Promise<void> {
     applyVisibility,
     loadFile: (f: File) => player.loadFile(f),
     resetSim,
+    forceDisplacement: (mm: number) => { debugD = mm * MM; return debugD; },
+    clearForcedDisplacement: () => { debugD = null; },
+    isForced: () => debugD !== null,
+    stageLite: () => stage.lite,
+    /** Numerical acceptance probe: world Z of the moving parts + local axial
+     *  extent of the three deformed surround meshes (rest z span ≈ fixed). */
+    probe: () => {
+      const out: Record<string, number> = {};
+      const wp = new THREE.Vector3();
+      const cone = audit.byIndex.get(21), cap = audit.byIndex.get(6), coil = audit.byIndex.get(1);
+      cone?.mesh.getWorldPosition(wp); out.coneZ = +wp.z.toFixed(5);
+      cap?.mesh.getWorldPosition(wp); out.capZ = +wp.z.toFixed(5);
+      coil?.mesh.getWorldPosition(wp); out.coilZ = +wp.z.toFixed(5);
+      for (const idx of [19, 15, 4]) {
+        const m = audit.byIndex.get(idx)?.mesh;
+        if (!m) continue;
+        m.geometry.computeBoundingBox();
+        const bb = m.geometry.boundingBox!;
+        out[`sur${idx}MinZ`] = +bb.min.z.toFixed(5);
+        out[`sur${idx}MaxZ`] = +bb.max.z.toFixed(5);
+      }
+      out.currentDmm = +assembly.currentD.toFixed(3);
+      return out;
+    },
     stats: () => ({ parts: audit.parts.length, verts: audit.parts.reduce((s, p) => s + p.verts, 0), tris: audit.parts.reduce((s, p) => s + p.tris, 0) })
   };
 

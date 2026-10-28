@@ -37,7 +37,9 @@ interface DeformPart {
 export class SurroundDeformer {
   private parts: DeformPart[] = [];
   private flexibility = 0.6;
-  private lastD = NaN;
+  private lastAppliedD = NaN;   // positions currently on the GPU
+  private lastNormalD = NaN;    // normals computed for this displacement
+  private lastNormalTime = 0;   // ms timestamp of last normal rebuild
 
   constructor(parts: AuditedPart[], private axis: THREE.Vector3, private axisPoint: THREE.Vector3,
               private rIn: number, private rOut: number) {
@@ -90,7 +92,9 @@ export class SurroundDeformer {
     });
   }
 
-  /** Rebuild the weight field for a flexibility value (0..1). */
+  /** Rebuild the weight field for a flexibility value (0..1).
+   *  IMPORTANT: reads REST positions — current buffer positions may be
+   *  displaced by a previous apply(), which would corrupt the radius field. */
   rebuildWeights(flexibility?: number): void {
     if (flexibility !== undefined) this.flexibility = clamp01(flexibility);
     const span = Math.max(1e-5, this.rOut - this.rIn);
@@ -99,12 +103,20 @@ export class SurroundDeformer {
     const expo = 2.4 - 1.4 * this.flexibility;
     const v = new THREE.Vector3();
     for (const part of this.parts) {
-      const posAttr = part.positionAttr;
+      part.mesh.updateWorldMatrix(true, false);
+      const m = part.mesh.matrixWorld.elements;
       for (let i = 0; i < part.count; i++) {
-        v.fromBufferAttribute(posAttr, i).applyMatrix4(part.mesh.matrixWorld);
-        const d = v.clone().sub(this.axisPoint);
-        const axial = d.dot(this.axis);
-        const r = Math.sqrt(Math.max(0, d.lengthSq() - axial * axial));
+        // rest position (local) -> world (translation/scale handled; rotation is
+        // identity for these meshes but apply the full matrix for safety)
+        const lx = part.rest[i * 3], ly = part.rest[i * 3 + 1], lz = part.rest[i * 3 + 2];
+        v.set(
+          m[0] * lx + m[4] * ly + m[8] * lz + m[12],
+          m[1] * lx + m[5] * ly + m[9] * lz + m[13],
+          m[2] * lx + m[6] * ly + m[10] * lz + m[14]
+        );
+        const dx = v.x - this.axisPoint.x, dy = v.y - this.axisPoint.y, dz = v.z - this.axisPoint.z;
+        const axial = dx * this.axis.x + dy * this.axis.y + dz * this.axis.z;
+        const r = Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - axial * axial));
         let t = clamp01((this.rOut - r) / span);
         t = Math.pow(t, expo);
         const w = smooth(t); // smoothstep keeps derivative 0 at both ends
@@ -112,13 +124,16 @@ export class SurroundDeformer {
         part.sinW[i] = Math.sin(Math.PI * w);
       }
     }
-    this.lastD = NaN; // force refresh
+    this.lastAppliedD = NaN; // force position refresh with the new weight field
   }
 
   /** Apply axial excursion d (world units, signed along `axis`) + bulge. */
   apply(d: number, strength: number, bulgeK = 0.14): void {
-    if (this.lastD === d && Math.abs(d) < 1e-7) return;
-    this.lastD = d;
+    // Skip redundant GPU uploads: only refresh when the displacement actually
+    // changed by a perceptible amount (keeps the render loop cheap at rest).
+    if (this.lastAppliedD === d) return;
+    if (Math.abs(d - (isNaN(this.lastAppliedD) ? NaN : this.lastAppliedD)) < 1e-5 && !isNaN(this.lastAppliedD)) return;
+    this.lastAppliedD = d;
     const bulge = -d * bulgeK * clamp01(strength) * 2.2;
     for (const part of this.parts) {
       const attr = part.positionAttr;
@@ -134,10 +149,19 @@ export class SurroundDeformer {
       attr.needsUpdate = true;
       part.needsNormals = true;
     }
-    this.updateNormals();
+    this.updateNormals(d);
   }
 
-  private updateNormals(): void {
+  /** Normals are throttled: recomputing ~170k triangle normals every single
+   *  frame is wasteful — shading differences below ~0.3 mm of excursion are
+   *  invisible on matte rubber, so we rebuild at most every 90 ms and only
+   *  when the displacement moved by more than 0.25 mm since the last rebuild. */
+  private updateNormals(d: number): void {
+    const now = performance.now();
+    const movedEnough = isNaN(this.lastNormalD) || Math.abs(d - this.lastNormalD) > 0.00025;
+    if (!movedEnough || now - this.lastNormalTime < 90) return;
+    this.lastNormalTime = now;
+    this.lastNormalD = d;
     for (const part of this.parts) {
       if (part.needsNormals) {
         part.mesh.geometry.computeVertexNormals();
@@ -153,7 +177,10 @@ export class SurroundDeformer {
       (attr.array as Float32Array).set(part.rest);
       attr.needsUpdate = true;
       part.mesh.geometry.computeVertexNormals();
+      part.needsNormals = false;
     }
-    this.lastD = 0;
+    this.lastAppliedD = 0;
+    this.lastNormalD = 0;
+    this.lastNormalTime = performance.now();
   }
 }

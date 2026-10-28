@@ -35,12 +35,13 @@ export class ConeAssembly {
     this.attached = true;
   }
 
-  /** d in world units along the axis (positive = outward/firing direction). */
+  /** d in world units along the axis, POSITIVE = outward (firing direction). */
   setDisplacement(dUnits: number, coilFactor = 1): void {
-    this.currentD = dUnits * this.outwardSign * 1000; // mm, signed outward+
-    this.group.position.copy(this.axis).multiplyScalar(dUnits);
+    this.currentD = dUnits * 1000; // mm, signed outward+
+    // convert to model-axis motion: positive d moves the assembly OUTWARD
+    this.group.position.copy(this.axis).multiplyScalar(dUnits * this.outwardSign);
     if (this.coil) {
-      const extra = dUnits * (coilFactor - 1);
+      const extra = dUnits * (coilFactor - 1) * this.outwardSign;
       this.coil.mesh.position.copy(this.coilRestLocal).addScaledVector(this.axisLocal, extra);
     }
   }

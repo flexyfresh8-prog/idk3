@@ -1,59 +1,190 @@
-# idk3 · Subwoofer Simulator
+# idk3 — Interactive Subwoofer Simulator
 
-Interactive, audio-reactive subwoofer simulator that runs entirely in your browser.
-Import an MP3 and watch the cone, rubber surround and voice coil respond to the bass in real time.
+A realistic, audio-reactive 3D subwoofer simulator that runs entirely in your
+browser. Import any MP3 from your device and watch the **actual components of
+the supplied GLB model** — the cone, the three-part rubber surround and the
+voice coil — move like a real driver.
 
 **Live:** https://flexyfresh8-prog.github.io/idk3/
 
-Built with Vite + TypeScript + Three.js + Web Audio API. No backend, no uploads — all audio is processed locally.
+No uploads, no backend, no accounts: your audio files never leave your device.
+
+![stack](https://img.shields.io/badge/Vite-TypeScript-blue) ![three](https://img.shields.io/badge/Three.js-WebGL-orange)
+
+---
 
 ## Features
 
-- **Real GLB model, real mapping** — the model is audited at load time; every named component is bound by verified mesh identity (not index guesses). The mapping table is shown in the left panel.
-- **Cone assembly motion** — cone + dust cap + voice coil move together along the driver's true axis, driven by a damped mass–spring model fed by low-frequency audio energy.
-- **Three-part flexible surround** — the rubber roll (3 meshes) deforms procedurally: the inner edge follows the cone, the outer edge stays fixed to the frame, and the roll bends smoothly between them. No rigid translation, no fake scaling, exact recovery on stop.
-- **Honest audio analysis** — Web Audio `AnalyserNode` with band-limited energy extraction (~20–200 Hz bass band by default, adjustable). High frequencies don't drive excursion; a 24 dB/oct low-pass tap plus RMS/peak smoothing keeps motion musical instead of twitchy.
-- **Simulation parameters, clearly labeled** — every slider that affects the sim is marked `SIM`. This is an educational visualization: it does not compute real Thiele/Small parameters, force, or measured Xmax.
-- **Two view modes** — complete subwoofer or driver-only, plus per-component visibility toggles and an isolation inspector.
-- **Works on mobile** — touch camera controls, drawer panels, no horizontal overflow, iOS/Android file import.
+- **Real model, real parts** — the simulator loads `public/models/tripo_model_1793179198729.glb`
+  (EXT_meshopt_compressed, decoded at runtime with `MeshoptDecoder`) and maps
+  every mesh to a mechanical role. 48 parts, 981,208 vertices, 1.92 M triangles.
+- **Audio-reactive physics** — a Web Audio graph extracts the *actual
+  low-frequency content* of your music (cascaded 24 dB/oct low-pass tap), an
+  AGC normalizes any track, a transient "punch" envelope adds kick, and a
+  damped mass-spring model converts it into smooth cone excursion. Bass moves
+  the cone; treble does not.
+- **Flexible 3-part rubber surround** — meshes 19/15/4 deform per-vertex with a
+  C0-continuous radial weight field: the inner edge follows the cone exactly,
+  the outer edge stays glued to the frame, and a signed bulge term makes the
+  half-roll bend like rubber in both directions.
+- **Coordinated moving assembly** — cone (21), dust cap (6) and voice coil (1)
+  ride one rigid group that translates strictly along the driver axis.
+- **Two view modes** — *Complete subwoofer* and *Driver only* (enclosure drum
+  hidden, not deleted), plus per-part visibility toggles and isolated solo
+  inspection.
+- **Component inspector** — select any of the 48 parts, highlight it in 3D,
+  read its verified identity (vertex/triangle counts, radial extents), reset
+  its transform.
+- **Full parameter panel** — max excursion, bass sensitivity, drive low-pass
+  cutoff, bass-band upper limit, motion smoothing, surround flexibility,
+  surround deformation strength, voice-coil travel, audio gain, animation
+  intensity. Every change applies live; simulation reset included.
+- **Local music player** — file picker, drag & drop, play/pause/restart/seek,
+  volume + mute, live spectrum analyzer, bass/mid/HF meters, excursion readout,
+  synthesized bass test tone. MP3/WAV/M4A/OGG/FLAC.
+- **Responsive** — desktop 3-column studio layout; tablet/phone use
+  off-canvas panels and a compact transport. No horizontal overflow from
+  360 px up; touch orbit/zoom/pan on the 3D view.
+- **Weak-GPU fallback** — the renderer auto-detects software rasterizers and
+  drops shadows/PMREM/pixel-ratio (`?lite=1` forces it, `?still=1` renders on
+  demand for automated tests).
+
+## Verified component map
+
+The mapping below was established by an offline audit of the GLB (JSON chunk +
+decoded meshopt buffers), confirmed programmatically at runtime and visually by
+rendering each part in isolation. Node names in this file are `tripo_part_N`,
+and node index == mesh index (verified — never assumed).
+
+| Component | Mesh | Role in simulation |
+|---|---|---|
+| Rubber Surround — Part 1 | **Mesh 19** | flexible — deforms with cone |
+| Rubber Surround — Part 2 | **Mesh 15** | flexible — deforms with cone |
+| Rubber Surround — Part 3 | **Mesh 4** | flexible — deforms with cone |
+| Cone | **Mesh 21** | moving assembly (axial translation) |
+| Voice Coil | **Mesh 1** | moving assembly (axial translation) |
+| Dust Cap *(found by audit — user brief did not list it)* | Mesh 6 | moving assembly |
+| Frame flange quadrants *(brief listed Mesh 7 as "cone")* | Meshes 5, **7**, 8, 22 | stationary — geometry shows screw-hole flange arcs; animating them would be wrong, so per the "never animate the wrong parts" rule they stay fixed and the cone role is carried by the verified diaphragm meshes 21 + 6 |
+| Basket legs | Meshes 9, 10, 20 | stationary |
+| Outer lip ring | Mesh 14 | stationary |
+| Spider / motor / terminals / pole details | Meshes 11–13, 16–18, 23–47 | stationary |
+| Enclosure drum (hidden in Driver-only mode) | Meshes 0, 2, 3 | stationary |
+
+Driver axis: **Z** (re-derived from mesh geometry at runtime as a sanity
+check); the driver fires toward **−Z**.
+
+The app exposes the audit at runtime: open the console and inspect
+`window.__sim.mapping()`, `window.__sim.probe()` and `window.__sim.axis()`.
+
+## How the surround deformation works
+
+For every vertex of meshes 19/15/4 the app precomputes, from **rest**
+positions:
+
+- `w(r)` — an axial-drive weight as a smoothstep of radial distance `r` from
+  the driver axis. `w = 1` at/below the cone attach radius (inner edge follows
+  the cone **exactly** — no gap), `w = 0` at/above the frame radius (outer edge
+  never detaches). *Flexibility* reshapes the profile between the plateaus.
+- `dirA` — the driver axis in the mesh's local space.
+- `dirR` — the per-vertex radial direction (for volume compensation).
+
+Each frame: `p = rest + dirA · (d · w) + dirR · (bulge · sin(π·w))`. The bulge
+term is signed with the excursion so inward and outward travel both roll the
+rubber naturally, and it vanishes at both edges (`sin(0) = sin(π) = 0`),
+preserving attachments. Because `w` depends only on radius, seam vertices
+shared in spirit between the three arc segments receive identical weights —
+the parts deform **together** with no tearing or gaps. Normal recomputation is
+throttled (≈11 Hz) to keep the frame budget for rendering. At `d = 0` the
+exact original buffer is restored.
+
+## How audio analysis drives the simulation
+
+```
+<audio> ──► MediaElementSource ─► sourceBus ─┬─► masterGain ─► destination
+ testTone ─► testGain ─────────┘             ├─► lp1 ─► lp2 ─► bassAnalyser   (drive tap)
+                                             └─► fullAnalyser                 (spectrum/RMS)
+```
+
+- The **drive tap** is the time-domain output of a cascaded 2× low-pass
+  (default 120 Hz, adjustable 40–300 Hz, 24 dB/oct total). A short recent-window
+  mean tracks the **signed phase** of the bass waveform — the cone visibly
+  pumps *with* the beat rather than jittering with overall loudness.
+- An **AGC** (slow-decaying reference) normalizes quiet and loud tracks.
+- A **punch envelope** (fast + slow followers) emphasizes transients.
+- A damped **mass-spring follower** (stiffness/damping from *Motion smoothing*)
+  turns the target into smooth, continuous excursion with soft limiting at
+  *Max cone excursion* (default 10 mm — a user-defined simulation parameter,
+  **not** a measured Xmax).
+- High-frequency content is metered (bass/mid/HF bars + spectrum) but never
+  drives excursion, so cymbals don't shake the cone.
+
+> **Honesty note** — an MP3's digital waveform does not tell you the true
+> physical excursion of a real driver (that depends on enclosure, power,
+> Thiele/Small parameters and the actual transducer). This simulator is a
+> visually convincing, audio-reactive approximation. It does **not** compute
+> real Thiele/Small parameters, force or measured millimeters of excursion.
+
+## Getting started
+
+```bash
+git clone https://github.com/flexyfresh8-prog/idk3.git
+cd idk3
+npm install
+npm run dev        # http://localhost:5173/idk3/
+```
+
+Then: **Import MP3** (or drag & drop a file anywhere), press play, or hit
+**Bass test tone** to see the driver move without any file.
+
+## Usage tips
+
+- Orbit: drag · Zoom: wheel / pinch · Pan: right-drag / two-finger drag.
+- *Driver only* + hiding *Frame · basket · motor* in the left panel gives a
+  clean look at the surround roll and voice coil motion.
+- Select *Rubber Surround — Part 1* and press solo (◎) to isolate one arc
+  segment and watch it flex.
+- If your device struggles, append `?lite=1` to the URL.
 
 ## Development
 
 ```bash
-npm install
-npm run dev      # local dev server
-npm run build    # type-check + production build to dist/
-npm run preview  # serve the production build
+npm run dev        # dev server (base path /idk3/)
+npm run build      # type-checks with tsc, then builds into dist/
+npm run preview    # serves the production build locally
 ```
 
-Deployment is automatic: pushes to `main` trigger `.github/workflows/deploy.yml`,
-which builds with `tsc && vite build` and publishes `dist/` via GitHub Actions
-(the repo's Pages source is set to "GitHub Actions").
+Automated acceptance tests live in `/scripts/acceptance_test.py` (Playwright;
+they drive `window.__sim`): 16/17 checks pass in CI-like headless mode — the
+only excluded check is media-element audio output, which requires a real audio
+device (verified instead through the Web Audio oscillator path).
 
-## Project structure
+## Deployment (GitHub Pages)
+
+Deployment is automated with GitHub Actions (`.github/workflows/deploy.yml`):
+every push to `main` builds the site and deploys it via the built-in
+`GITHUB_TOKEN` with minimal permissions — no secrets involved.
+
+`vite.config.ts` sets `base: '/idk3/'` so all asset and model URLs resolve
+under the repository subpath. If Pages ever reports "deployment not
+configured", open **Settings → Pages → Build and deployment → Source** and
+select **GitHub Actions** once; everything after that is automatic.
+
+## Repository layout
 
 ```
-src/
-  main.ts             # bootstrap, GLB load, wiring
-  core/
-    gltfAudit.ts      # scene audit + mesh mapping verification
-    assembly.ts       # moving assembly (cone + cap + coil)
-    surroundDeform.ts # 3-part rubber roll deformation
-    physics.ts        # damped mass-spring cone dynamics
-    types.ts
-  audio/
-    audioEngine.ts    # playback, low-frequency analysis, test tone
-  scene/
-    stage.ts          # renderer, camera, lights, environment
-    materials.ts      # studio material set
-  ui/
-    inspector.ts      # component list, visibility, isolation
-    paramsPanel.ts    # simulation sliders
-    playerUI.ts       # transport bar, meters, spectrum
+├── .github/workflows/deploy.yml   # build + Pages deployment
+├── index.html                     # app shell (panels, transport, overlays)
+├── public/models/*.glb            # the supplied subwoofer model (as uploaded)
+└── src
+    ├── main.ts                    # boot, audit wiring, render loop
+    ├── style.css                  # responsive dark studio UI
+    ├── core
+    │   ├── types.ts               # verified component map + sim params
+    │   ├── gltfAudit.ts           # runtime model audit / axis derivation
+    │   ├── assembly.ts            # rigid moving group (cone + cap + coil)
+    │   ├── surroundDeform.ts      # 3-part rubber deformation field
+    │   └── physics.ts             # damped mass-spring excursion model
+    ├── audio/audioEngine.ts       # Web Audio graph + DSP + test tone
+    ├── scene/{stage,materials}.ts # renderer/lights/orbit + PBR sets
+    └── ui/{inspector,paramsPanel,playerUI}.ts
 ```
-
-## Note on scale
-
-The GLB is an oversized art model (flange ≈ 1.10 m at natural scale); excursion
-values are calibrated against that scale and remain user-defined simulation
-parameters.

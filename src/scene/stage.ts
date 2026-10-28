@@ -40,7 +40,10 @@ export class Stage {
     this.lite = lite;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: !lite, powerPreference: 'high-performance' });
-    this.maxPixelRatio = Math.min(window.devicePixelRatio, 2);
+    // 1.75 ceiling: this model is ~1.9 M triangles with MeshPhysicalMaterial
+    // (clearcoat + sheen) — full retina 2× rarely holds 60 fps on mid GPUs,
+    // and the difference between 1.75 and 2.0 is invisible in motion.
+    this.maxPixelRatio = Math.min(window.devicePixelRatio, 1.75);
     this.renderer.setPixelRatio(lite ? 1 : this.maxPixelRatio);
     this.renderer.shadowMap.enabled = !lite;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -207,18 +210,18 @@ export class Stage {
     this.idleTime += dt;
 
     // ---- adaptive resolution: keep the GPU inside its frame budget.
-    // If the smoothed frame cost exceeds ~19 ms (< 52 fps) step the render
-    // scale down; below ~12 ms with headroom, step back up. Steps are small
+    // If the smoothed frame cost exceeds ~17.5 ms (< 55 fps) step the render
+    // scale down; below ~12.5 ms with headroom, step back up. Steps are small
     // and rate-limited so the picture never visibly pulses.
     if (dt > 0 && dt < 0.5) {
       this.frameCost += (dt * 1000 - this.frameCost) * 0.08;
       this.drsCooldown -= dt;
       if (this.drsCooldown <= 0 && !this.lite) {
-        if (this.frameCost > 19 && this.renderScale > 0.55) {
+        if (this.frameCost > 17.5 && this.renderScale > 0.55) {
           this.renderScale = Math.max(0.55, this.renderScale - 0.1);
           this.applyRenderScale();
           this.drsCooldown = 0.8;
-        } else if (this.frameCost < 12 && this.renderScale < 1) {
+        } else if (this.frameCost < 12.5 && this.renderScale < 1) {
           this.renderScale = Math.min(1, this.renderScale + 0.05);
           this.applyRenderScale();
           this.drsCooldown = 1.2;

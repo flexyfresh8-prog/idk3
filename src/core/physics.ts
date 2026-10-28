@@ -42,10 +42,21 @@
 // We set Re = 1/(EM_SHARE·2ζωn) so the total damping ratio at rest equals
 // the v2 feel. The drive gain is GAIN_K·Xmax·ωe (ωe = boxed resonance): the
 // constant was solved numerically against the FULL nonlinear model (Bl(x)
-// falloff + Duffing stiffening + quadratic aero + Le droop) so a full-scale
-// (±1.4) sine at the boxed resonance produces ≈ 1.25 × Xmax of peak
-// excursion — verified self-similar across the whole slider ranges
-// (Xmax 2–30 mm, boxLoad 0–1, ζ 0.30–0.85 all land within 120–127 %).
+// falloff + Duffing stiffening + quadratic aero + Le droop) so that the
+// suspension VISIBLY MAXES OUT the way a real subwoofer does when driven
+// hard:
+//
+//   full-scale (±1.4) sine at the boxed resonance -> ≈ 1.75 × Xmax peak
+//     (cone slams into the progressive-stiffening limit, like a real
+//      driver at rated power overdriving past Xmax)
+//   bass-heavy music (AGC-normalized)             -> hits ≈ 1.3 × Xmax,
+//     typical passages 0.3–1.0 × Xmax
+//   small signals stay linear (0.1 sine ≈ 0.16 × Xmax)
+//
+// Verified self-similar across the whole slider ranges (Xmax 2–30 mm,
+// boxLoad 0–1 land within 170–178 % of that slider's Xmax) and bounded:
+// even gain ×16 tops out at ≈ 30 mm because the Duffing hardening,
+// Bl(x) falloff and aero drag form a physical limiter.
 //
 // Integration: RK4, one step per AUDIO SAMPLE (h ≈ 20.8 µs @ 48 kHz). The
 // electrical time constant τ = Le0/Re resolves in ~6 sub-steps, the mechanical
@@ -67,9 +78,11 @@ const AERO_COEFF = 0.08;       // quadratic drag at Xmax peak velocity, as a
                                // linear region, progressive at the extremes.
 const BOX_K = 0.9;             // sealed-box stiffness gain at boxLoad = 1
 // Drive-gain constant: gain = GAIN_K · Xmax · ωe. Solved numerically against
-// this exact RK4 model (tests/physics_validate.py) so the calibrated
-// excursion contract above holds with all nonlinearities active.
-const GAIN_K = 2.3637;
+// this exact RK4 model (tests/physics_validate.py, bisect at ζ = 0.7071) so
+// the calibrated excursion contract above holds with all nonlinearities
+// active: full-scale sine @ boxed resonance ≈ 1.75 × Xmax — the suspension
+// maxes out on heavy bass instead of never reaching its travel limits.
+const GAIN_K = 5.4339;
 
 export interface StepOpts {
   voltageGain: number; // drive voltage (normalized) per unit of AGC audio
@@ -92,9 +105,10 @@ export interface StepOpts {
 export const REALISTIC_ZETA = 0.7071;
 
 /** Voltage gain that makes a full-scale (±1.4) sine at the BOXED resonance
- *  produce ≈ 1.25 × Xmax of peak excursion (v2 headroom convention, now
- *  honored by the nonlinear model — see GAIN_K above). Compensating for the
- *  box air spring keeps the excursion contract true for every enclosure
+ *  drive the cone to ≈ 1.75 × Xmax peak — deep enough that heavy bass
+ *  passages visibly max out the suspension (≈ 1.3 × Xmax hits), while
+ *  small signals stay linear (see GAIN_K above). Compensating for the box
+ *  air spring keeps the excursion contract true for every enclosure
  *  setting: ωe = ωn·√(1 + BOX_K·boxLoad). */
 export function calibratedVoltageGain(maxUnits: number, resonanceHz: number, boxLoad = 0): number {
   const wn = TWO_PI * Math.max(5, resonanceHz);

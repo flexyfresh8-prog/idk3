@@ -9,6 +9,11 @@ export interface InspectorCallbacks {
   onVisibility: (part: AuditedPart, visible: boolean) => void;
   onSolo: (part: AuditedPart | null) => void;
   onResetTransform: (part: AuditedPart) => void;
+  /** Called after a part's material is cloned for the highlight pulse.
+   *  THREE does not copy onBeforeCompile on clone(), so shader-injected
+   *  effects (e.g. the GPU surround deformation) must be re-applied here or
+   *  the part would visually snap back to its rest shape while selected. */
+  onMaterialClone?: (part: AuditedPart, clone: THREE.Material) => void;
 }
 
 const GROUP_TITLES: { key: string; title: string }[] = [
@@ -152,6 +157,7 @@ export class Inspector {
       if (!mat) {
         mat = (orig.clone() as THREE.MeshStandardMaterial);
         mat.userData.__original = orig;
+        this.cb.onMaterialClone?.(part, mat);
         part.mesh.material = mat;
         this.highlightMats.set(part.index, mat);
       }

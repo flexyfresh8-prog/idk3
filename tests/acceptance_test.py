@@ -68,6 +68,25 @@ def run():
         exact = all(abs(back[k] - rest[k]) < 1e-5 for k in rest)
         check("Exact return to rest shape", exact, "probe(back)==probe(rest)")
 
+        # 6a. GPU deformation path: the surround displacement field runs in
+        # the vertex shader (uniform-driven). Guards against regressing to
+        # per-frame CPU vertex rewrites (~87k verts/frame + computeVertexNormals
+        # spikes every 90 ms — the "performance garbage while playing music"
+        # bug). (a) the shared uniforms must track the forced displacement
+        # (this model fires toward -Z, so outward +14mm -> uD = -0.014);
+        # (b) the CPU position buffer must stay at REST in every pose.
+        page.evaluate("window.__sim.forceDisplacement(14); window.__simRenderOnce()")
+        ds = page.evaluate("window.__sim.deformState()")
+        check("GPU deform uniforms driven (uD == -0.014 at forced 14mm)",
+              abs(ds["uD"] + 0.014) < 1e-6 and abs(ds["uBulge"] - 0.014 * 0.14 * 0.8 * 2.2) < 1e-6,
+              f"deformState={ds}")
+        buf_out = page.evaluate("window.__sim.mesh(19).geometry.attributes.position.array[2]")
+        page.evaluate("window.__sim.forceDisplacement(0); window.__simRenderOnce()")
+        buf_rest = page.evaluate("window.__sim.mesh(19).geometry.attributes.position.array[2]")
+        check("Surround position buffer stays at rest (GPU-side deform)",
+              abs(buf_out - buf_rest) < 1e-9,
+              f"z[0] at d=14mm: {buf_out}, at d=0: {buf_rest}")
+
         # 6b. surround normal health — regression guard for the "black surround"
         # bug: quantized Int8 GLB normals + computeVertexNormals truncation.
         # Healthy = every sampled normal is a non-zero vector at rest.
@@ -132,12 +151,16 @@ def run():
               f"max |drive|={round(max(drive_vals),3)} max |excursion|={round(max(disp_vals),2)}mm")
         # REGRESSION GUARD (excursion calibration): the velocity clamp used to
         # be frequency-blind (40*maxUnits = 0.4 m/s), which capped every sine
-        # at vMax/ω ≈ 1-1.8 mm and the whole sim at "0-1 mm xmax". With the
-        # fixed physics the AGC-normalized test tone must drive the cone to a
-        # realistic fraction of the default 10 mm Xmax: ≈5.5 mm peak modeled.
-        # Floor 3 mm = the cone visibly travels; ceiling 20 mm = no runaway.
-        check("Excursion reaches realistic Xmax fraction (no 1mm clamp bug)",
-              3.0 < max(disp_vals) < 20.0,
+        # at vMax/ω ≈ 1-1.8 mm and the whole sim at "0-1 mm xmax". Then the
+        # gain itself was calibrated too conservatively (full-scale sine ->
+        # 1.25 Xmax), so real music NEVER reached the suspension limits — the
+        # user-reported "suspension never gets maxed out". The current
+        # contract: full-scale sine at boxed resonance ≈ 1.75 Xmax, so the
+        # AGC-normalized test tone must drive the cone TO/PAST the default
+        # 10 mm Xmax (≈ 12 mm modeled). Floor 6 mm = suspension visibly
+        # loaded; ceiling 25 mm = Duffing/BL limiter keeps it physical.
+        check("Excursion maxes out the suspension (hits ≈ 1.2+ Xmax)",
+              6.0 < max(disp_vals) < 25.0,
               f"max |excursion|={round(max(disp_vals),2)}mm (default Xmax=10mm)")
         page.evaluate("window.__sim.stopTestTone()")
 

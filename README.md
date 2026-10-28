@@ -13,6 +13,44 @@ No uploads, no backend, no accounts: your audio files never leave your device.
 
 ---
 
+## v3.3 — suspension maxes out + GPU deformation (performance rework)
+
+- **The suspension now visibly MAXES OUT on heavy bass.** The v3.1 gain was
+  calibrated too conservatively (full-scale sine → 1.25 × Xmax), so real
+  music — bursty, mostly off-resonance — sat at 30–60 % of Xmax forever and
+  never touched the suspension limits (user-reported). The drive gain
+  `GAIN_K·Xmax·ωe` was re-solved by bisection against the full nonlinear RK4
+  model at the app's pinned ζ = 0.7071: a full-scale sine at the boxed
+  resonance now drives **≈ 1.75 × Xmax** — the cone rides the Duffing
+  stiffening limit like a real driver pushed past rated power — so
+  AGC-normalized music hits land at **≈ 1.3 × Xmax** (measured 13.2 mm of a
+  10 mm Xmax in the browser acceptance test), typical passages stay in the
+  0.3–1.0 × Xmax range, and small signals remain linear (0.1 sine ≈ 0.16 ×
+  Xmax). Self-similar across the slider ranges (170–178 % of each Xmax
+  setting) and physically bounded even at gain ×16 (≈ 30 mm) by the Duffing
+  hardening + Bl(x) falloff + aero drag limiter stack.
+- **Surround deformation moved entirely to the GPU.** v3.2 rewrote ~87 k
+  vertex positions across the three surround meshes every frame, re-uploaded
+  ~1 MB of position buffers, and rebuilt normals for ~170 k triangles every
+  90 ms — multi-millisecond CPU spikes that made music playback stutter
+  ("performance garbage"). The deformation field is analytic, so it now runs
+  in the **vertex shader** (via `onBeforeCompile`): the CPU writes two shared
+  uniforms per frame, and the shading normal follows the displaced surface
+  through a first-order Jacobian correction (`n' = normalize(n − Jᵀn)` with
+  `∇w·n` precomputed per vertex) — no per-frame vertex work, no buffer
+  uploads, no `computeVertexNormals`, no GC churn. Verified in the acceptance
+  suite: the uniforms track the physics displacement and the CPU position
+  buffers stay at rest in every pose.
+- **Shadow pass halved.** All 48 meshes used to cast shadows — including
+  motor internals sealed inside the enclosure drum. Shadow casting is now
+  limited to the enclosure + moving assembly (1.92 M → 0.98 M shadow-pass
+  triangles, −49 %) with no visible difference on the ground.
+- **Renderer tuning.** Pixel-ratio ceiling 2 → 1.75 (invisible in motion on
+  the physical-material pipeline, large on HiDPI GPUs) and the adaptive
+  resolution scaler now reacts earlier (17.5 ms step-down threshold).
+
+---
+
 ## v3 rework — coupled physics, finish studio, dyno-lab UI
 
 - **Fully coupled electro-mechanical physics (RK4, per-sample).** v2 bolted
@@ -171,15 +209,21 @@ positions:
   never detaches). *Flexibility* reshapes the profile between the plateaus.
 - `dirA` — the driver axis in the mesh's local space.
 - `dirR` — the per-vertex radial direction (for volume compensation).
+- `∇w·n` — the dot product of the analytic weight gradient with the rest
+  normal (one float per vertex, drives the shader-side normal correction).
 
-Each frame: `p = rest + dirA · (d · w) + dirR · (bulge · sin(π·w))`. The bulge
+The displacement field `p = rest + dirA · (d · w) + dirR · (bulge · sin(π·w))`
+evaluates **in the vertex shader** (`src/core/surroundDeform.ts` patches the
+material via `onBeforeCompile`): every frame the CPU only writes the two
+shared uniforms `uD` and `uBulge`, and the GPU displaces ~87 k vertices at
+clock speed — zero per-frame CPU vertex work, zero buffer uploads. The bulge
 term is signed with the excursion so inward and outward travel both roll the
 rubber naturally, and it vanishes at both edges (`sin(0) = sin(π) = 0`),
-preserving attachments. Because `w` depends only on radius, seam vertices
-shared in spirit between the three arc segments receive identical weights —
-the parts deform **together** with no tearing or gaps. Normal recomputation is
-throttled (≈11 Hz) to keep the frame budget for rendering. At `d = 0` the
-exact original buffer is restored.
+preserving attachments. Shading normals follow the displaced surface through
+the field's first-order Jacobian, so highlights roll correctly without any
+`computeVertexNormals` rebuild. Because `w` depends only on radius, seam
+vertices shared between the three arc segments receive identical weights —
+the parts deform **together** with no tearing or gaps.
 
 ## How audio analysis drives the simulation
 
@@ -241,9 +285,14 @@ npm run preview    # serves the production build locally
 ```
 
 Automated acceptance tests live in [`tests/acceptance_test.py`](tests/acceptance_test.py) (Playwright;
-they drive `window.__sim`): 16/17 checks pass in CI-like headless mode — the
-only excluded check is media-element audio output, which requires a real audio
-device (verified instead through the Web Audio oscillator path).
+they drive `window.__sim`): 25/26 checks pass in CI-like headless mode — the
+only failing check is media-element audio output, which requires a real audio
+device (verified instead through the Web Audio oscillator path). The suite
+includes regression guards for the excursion contract (test tone must max out
+the suspension at ≈ 1.2+ Xmax), the GPU deform path (uniforms driven, CPU
+buffers at rest) and the removed motion-smoothing option.
+[`tests/physics_validate.py`](tests/physics_validate.py) replicates the RK4
+model offline and re-solves the drive-gain constant by bisection.
 
 ## Deployment (GitHub Pages)
 

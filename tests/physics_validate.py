@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Numerical replica of src/core/physics.ts RK4 electro-mechanical model.
 
-Goal: reproduce the user-reported "cone only moves 0-1mm" bug, then verify
-the fix targets BEFORE editing TypeScript:
+Historical bugs this file nailed down (kept for regression archaeology):
 
-  Bug A (primary): velocity clamp vMax = 40*maxUnits = 0.4 m/s is frequency-
-  blind. A 10mm cone at 36.7 Hz needs ~2.3 m/s peak velocity -> the clamp
-  hard-caps sinusoidal excursion at vMax/(2*pi*f) ~ 1.0-1.8 mm.
+  Bug A: velocity clamp vMax = 40*maxUnits = 0.4 m/s was frequency-blind;
+  a 10 mm cone at 36.7 Hz needs ~2.3 m/s peak -> sine capped at ~1-1.8 mm.
 
-  Bug B: quadratic aero drag 'cAero*v*|v|/maxUnits' is ~166x too strong
-  (linearized zeta ~ 9 at Xmax velocity vs physical 0.05-0.1).
+  Bug B: quadratic aero drag divided by maxUnits a second time (~166x too
+  strong), squashing excursion further.
 
-Fix targets (defaults: Xmax=10mm, Fs=32Hz, boxLoad=0.35, zeta=0.6025):
-  T1  full-scale (1.4) sine at boxed resonance  -> peak ~ 1.15-1.35 * Xmax
-  T2  full-scale sine 45 Hz                     -> peak ~ 6-10 mm
-  T3  test-tone-like signal (45+62 Hz, AGC 1.0) -> peak ~ 4-8 mm
-  T4  music-like bass (RMS~0.35, peak 1.0)      -> typical 1.5-5, peaks 7-11
-  T5  small signal (0.1 sine @45)               -> ~0.4-1.5 mm (linear region)
+  Bug C (v3.3): the drive gain was calibrated so a full-scale sine reached
+  only 1.25 Xmax — real music (bursty, off-resonance) then sat at 30-60 %
+  of Xmax forever: the user-reported "suspension never gets maxed out".
+
+Current contract (defaults: Xmax=10mm, Fs=32Hz, boxLoad=0.35,
+zeta=REALISTIC_ZETA=0.7071 — the value the app pins):
+  T1  full-scale (1.4) sine at boxed resonance  -> peak ~ 1.70-1.80 * Xmax
+      (suspension VISIBLY MAXED OUT, riding the Duffing stiffening limit)
+  T2  full-scale sine 45 Hz                     -> ~ 1.7 * Xmax
+  T3  test-tone-like signal (45+62 Hz, AGC 1.0) -> ~ 12 mm (1.2+ Xmax)
+  T4  music-like bass (RMS~0.35, peak 1.0)      -> hits ~ 1.3 Xmax (13 mm)
+  T5  small signal (0.1 sine @45)               -> ~ 0.16 * Xmax (linear)
+GAIN_K is re-solved by bisection here whenever the model changes.
 """
 import math
 
@@ -57,7 +62,7 @@ def make_stiff(wn2, max_units, box_load):
     return stiff
 
 
-def simulate(sig, v_gain, zeta=0.30 + 0.55 * 0.55, max_units=0.010,
+def simulate(sig, v_gain, zeta=0.7071, max_units=0.010,
              res_hz=32, box_load=0.35, cone_mass=1.0,
              aero_mode="buggy", aero_coeff=0.05, v_max_mode="buggy"):
     """Integrate the 3-state system with RK4, one step per sample (as TS does).
@@ -216,33 +221,35 @@ def main():
 
     # ------------------------------------------------ fix calibration: bisect K
     # gain = K * xmax * we   such that a full-scale (1.4) sine at the boxed
-    # resonance peaks at exactly 1.25 * Xmax with fixed aero + fixed clamp.
-    print("\n=== bisect K in gain = K * xmax * we for 1.25*Xmax at resonance ===")
-    lo, hi = 1.0, 8.0
+    # resonance peaks at 1.75 * Xmax (suspension maxed out) with fixed aero,
+    # fixed clamp and the app's pinned REALISTIC_ZETA = 0.7071.
+    print("\n=== bisect K in gain = K * xmax * we for 1.75*Xmax at resonance (zeta=0.7071) ===")
+    lo, hi = 1.0, 14.0
     for _ in range(40):
         mid = 0.5 * (lo + hi)
-        pk, _, _ = simulate(sine(fe, 1.4, 6.0), mid * xmax * we, aero_mode="fixed", v_max_mode="fixed")
-        if pk > 1.25 * xmax:
+        pk, _, _ = simulate(sine(fe, 1.4, 6.0), mid * xmax * we, aero_mode="fixed",
+                            v_max_mode="fixed", zeta=0.7071)
+        if pk > 1.75 * xmax:
             hi = mid
         else:
             lo = mid
     K = 0.5 * (lo + hi)
-    print(f"  K = {K:.4f}  (gain at defaults = {K*xmax*we:.3f})")
+    print(f"  K = {K:.4f}  (gain at defaults = {K*xmax*we:.3f})  [TS: GAIN_K = 5.4339]")
 
     print(f"\n=== TARGETS with gain = K*xmax*we, K={K:.4f} ===")
     gain = K * xmax * we
     for f in (fe, 45.0, 62.0):
-        pk, rms, _ = simulate(sine(f, 1.4, 6.0), gain, aero_mode="fixed", v_max_mode="fixed")
+        pk, rms, _ = simulate(sine(f, 1.4, 6.0), gain, aero_mode="fixed", v_max_mode="fixed", zeta=0.7071)
         report(f"T1/T2 full-scale 1.4 sine @ {f:.1f} Hz", pk, rms)
-    pk, rms, _ = simulate(sine(fe, 1.0, 6.0), gain, aero_mode="fixed", v_max_mode="fixed")
+    pk, rms, _ = simulate(sine(fe, 1.0, 6.0), gain, aero_mode="fixed", v_max_mode="fixed", zeta=0.7071)
     report("T2b 1.0 sine @ boxed res", pk, rms)
     tt = test_tone_like(8.0)
-    pk, rms, _ = simulate(tt, gain, aero_mode="fixed", v_max_mode="fixed")
+    pk, rms, _ = simulate(tt, gain, aero_mode="fixed", v_max_mode="fixed", zeta=0.7071)
     report("T3 test tone (AGC peak=1.0)", pk, rms)
     mu = music_like(8.0)
-    pk, rms, _ = simulate(mu, gain, aero_mode="fixed", v_max_mode="fixed")
+    pk, rms, _ = simulate(mu, gain, aero_mode="fixed", v_max_mode="fixed", zeta=0.7071)
     report("T4 music-like bass (peak 1.0, RMS~0.35)", pk, rms)
-    pk, rms, _ = simulate(sine(45, 0.1, 6.0), gain, aero_mode="fixed", v_max_mode="fixed")
+    pk, rms, _ = simulate(sine(45, 0.1, 6.0), gain, aero_mode="fixed", v_max_mode="fixed", zeta=0.7071)
     report("T5 small 0.1 sine @ 45 Hz", pk, rms)
 
     # boxLoad extremes sanity

@@ -1,20 +1,31 @@
-// Three-part rubber surround deformation.
+// Three-part rubber surround deformation — GPU-accelerated.
 //
-// Technique: CPU-side vertex displacement on the original GLB geometry.
-// For every vertex we precompute (from REST world positions):
-//   w(r)   — axial-drive weight purely as a function of radial distance r
-//            from the driver axis, so the field is C0-continuous across the
-//            three surround parts (shared seam vertices get identical w).
-//            w = 1 at/below the cone attach radius (inner edge follows the
-//            cone EXACTLY — no gap), w = 0 at/above the frame radius
-//            (outer edge stays fixed — no detachment).
-//   dirA   — the world driver axis expressed in the mesh's LOCAL space
-//   dirR   — per-vertex radial direction in local space (volume compensation)
+// v3.2 ran this deformation on the CPU: every frame it rewrote ~87k vertex
+// positions across the three surround meshes, re-uploaded ~1 MB of position
+// buffers to the GPU, and every 90 ms recomputed normals for ~170k triangles
+// (computeVertexNormals) — multi-millisecond CPU spikes that made music
+// playback stutter. The deformation field is fully analytic, so it now runs
+// ENTIRELY in the vertex shader:
 //
-// Per frame: p = rest + dirA * (d * w) + dirR * (bulge * sin(pi*w))
-// The bulge term makes the half-roll appear to roll rather than shear; it is
-// signed with the displacement so inward/outward excursion both work, and it
-// vanishes at both edges (sin(pi*0)=sin(pi*1)=0), preserving attachments.
+//   p' = p + aDirA·(uD·aW) + aDirR·(uBulge·sin(π·aW))
+//   n' = normalize(n − (uD·aDirA + uBulge·π·cos(π·aW)·aDirR)·aKG)
+//
+// Per-vertex precomputed attributes (from REST geometry, built once):
+//   aDirA — the driver axis in the mesh's LOCAL space
+//   aDirR — per-vertex radial direction in local space
+//   aW    — axial-drive weight w(r): 1 at/below the cone attach radius
+//           (inner edge follows the cone EXACTLY — no gap), 0 at/above the
+//           frame radius (outer edge fixed — no detachment). C0-continuous
+//           across the three parts because it depends only on world radius.
+//   aKG   — dot(∇w, restNormal): the precomputed normal-perturbation factor.
+//           Derived from the analytic gradient of the weight field, so the
+//           shading follows the roll WITHOUT any per-frame normal rebuild.
+//
+// Per frame the CPU only writes two shared uniforms (uD, uBulge) — zero
+// vertex work, zero buffer uploads, zero GC pressure. The normal update is
+// the first-order Jacobian correction of the same field, so it stays
+// physically consistent with the displaced surface (no computeVertexNormals,
+// no flip-guard needed — the rest normals never change sign).
 //
 // Flexibility reshapes w between the edges ONLY — the plateau guarantees
 // (w=1 inner, w=0 outer) hold for every flexibility value.
@@ -23,24 +34,32 @@ import type { AuditedPart } from './gltfAudit';
 import { clamp01, smooth } from './gltfAudit';
 
 interface DeformPart {
+  index: number;
   mesh: THREE.Mesh;
-  rest: Float32Array;      // rest local positions
-  dirA: Float32Array;      // per-vertex: driver axis in local space (same for all verts, stored per slot for cache-friendly loop)
+  rest: Float32Array;      // rest local positions (source of truth for bounds)
+  dirA: Float32Array;      // per-vertex: driver axis in local space
   dirR: Float32Array;      // per-vertex radial dir (local)
-  w: Float32Array;         // per-vertex weight
-  sinW: Float32Array;      // sin(pi*w)
+  wAttr: THREE.BufferAttribute;   // aW
+  kgAttr: THREE.BufferAttribute;  // aKG
   count: number;
-  positionAttr: THREE.BufferAttribute;
-  needsNormals: boolean;
-  refNormals: Float32Array | null; // orientation reference (authored GLB normals, rebuilt if degenerate)
 }
+
+/** Shared uniforms — every patched material references THESE objects, so a
+ *  single write updates all surround meshes (and any highlight clones). */
+interface DeformUniforms {
+  uD: { value: number };
+  uBulge: { value: number };
+}
+
+const DEFORM_CACHE_KEY = 'idk3-surround-deform-v2';
 
 export class SurroundDeformer {
   private parts: DeformPart[] = [];
   private flexibility = 0.6;
-  private lastAppliedD = NaN;   // positions currently on the GPU
-  private lastNormalD = NaN;    // normals computed for this displacement
-  private lastNormalTime = 0;   // ms timestamp of last normal rebuild
+  private lastD = NaN;
+  private lastBulge = NaN;
+  private patched = new WeakSet<THREE.Material>();
+  private readonly sharedU: DeformUniforms = { uD: { value: 0 }, uBulge: { value: 0 } };
 
   /** Smooth per-vertex normals derived from triangle winding, returned as a
    *  raw Float32Array. Used instead of BufferGeometry.computeVertexNormals()
@@ -119,8 +138,9 @@ export class SurroundDeformer {
     // the roll shades pitch black (N·L = 0) no matter what the material says.
     //
     // Fix: build smooth normals ourselves into a fresh Float32 attribute
-    // (also removes the 127-step banding), and keep that result as the
-    // orientation reference for every later deform rebuild (flip-guarded).
+    // (also removes the 127-step banding). These repaired REST normals are
+    // also the base for the shader-side Jacobian normal update, and the
+    // orientation reference recorded for the surroundNormals() test hook.
     let refNormals: Float32Array | null = null;
     const nAttr0 = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
     if (nAttr0) {
@@ -139,7 +159,7 @@ export class SurroundDeformer {
         geo.setAttribute('normal', new THREE.BufferAttribute(refNormals, 3));
       } else if (quantized) {
         // Authored data is good but quantized/interleaved — decode it into a
-        // Float32 attribute so later recomputes cannot truncate to zero.
+        // Float32 attribute so nothing downstream can truncate to zero.
         const decoded = new Float32Array(count * 3);
         for (let i = 0; i < count; i++) {
           decoded[i * 3] = nAttr0.getX(i);
@@ -164,11 +184,13 @@ export class SurroundDeformer {
     const qWorld = mesh.getWorldQuaternion(new THREE.Quaternion());
     const qInv = qWorld.clone().invert();
 
-    // driver axis in local space (uniform)
+    // driver axis in local space (uniform per part)
     const axisLocal = this.axis.clone().applyQuaternion(qInv).normalize();
 
     const dirA = new Float32Array(count * 3);
     const dirR = new Float32Array(count * 3);
+    const wArr = new Float32Array(count);
+    const kgArr = new Float32Array(count);
     const v = new THREE.Vector3();
     const radial = new THREE.Vector3();
 
@@ -183,20 +205,25 @@ export class SurroundDeformer {
       dirR[i * 3] = radial.x; dirR[i * 3 + 1] = radial.y; dirR[i * 3 + 2] = radial.z;
     }
 
+    geo.setAttribute('aDirA', new THREE.BufferAttribute(dirA, 3));
+    geo.setAttribute('aDirR', new THREE.BufferAttribute(dirR, 3));
+    const wAttr = new THREE.BufferAttribute(wArr, 1);
+    const kgAttr = new THREE.BufferAttribute(kgArr, 1);
+    geo.setAttribute('aW', wAttr);
+    geo.setAttribute('aKG', kgAttr);
+
     this.parts.push({
-      mesh, rest, dirA, dirR,
-      w: new Float32Array(count),
-      sinW: new Float32Array(count),
-      count,
-      positionAttr: posAttr,
-      needsNormals: false,
-      refNormals
+      index: part.index, mesh, rest, dirA, dirR,
+      wAttr, kgAttr, count
     });
   }
 
-  /** Rebuild the weight field for a flexibility value (0..1).
-   *  IMPORTANT: reads REST positions — current buffer positions may be
-   *  displaced by a previous apply(), which would corrupt the radius field. */
+  /** Rebuild the weight field (aW) and its normal-gradient factor (aKG) for a
+   *  flexibility value (0..1). Reads REST positions — never the live buffer.
+   *  aKG = dw/dr · dot(radialDir, restNormal): because the deformation field
+   *  is D(p) = aDirA·(uD·w) + aDirR·(uBulge·sin(πw)) with w = w(r), its
+   *  Jacobian is (uD·aDirA + uBulge·π·cos(πw)·aDirR) ⊗ ∇w — so the whole
+   *  normal correction needs only this one dot product per vertex. */
   rebuildWeights(flexibility?: number): void {
     if (flexibility !== undefined) this.flexibility = clamp01(flexibility);
     const span = Math.max(1e-5, this.rOut - this.rIn);
@@ -207,9 +234,11 @@ export class SurroundDeformer {
     for (const part of this.parts) {
       part.mesh.updateWorldMatrix(true, false);
       const m = part.mesh.matrixWorld.elements;
+      const dirR = part.dirR;
+      const nAttr = part.mesh.geometry.getAttribute('normal') as THREE.BufferAttribute;
+      const wArr = part.wAttr.array as Float32Array;
+      const kgArr = part.kgAttr.array as Float32Array;
       for (let i = 0; i < part.count; i++) {
-        // rest position (local) -> world (translation/scale handled; rotation is
-        // identity for these meshes but apply the full matrix for safety)
         const lx = part.rest[i * 3], ly = part.rest[i * 3 + 1], lz = part.rest[i * 3 + 2];
         v.set(
           m[0] * lx + m[4] * ly + m[8] * lz + m[12],
@@ -219,92 +248,114 @@ export class SurroundDeformer {
         const dx = v.x - this.axisPoint.x, dy = v.y - this.axisPoint.y, dz = v.z - this.axisPoint.z;
         const axial = dx * this.axis.x + dy * this.axis.y + dz * this.axis.z;
         const r = Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - axial * axial));
-        let t = clamp01((this.rOut - r) / span);
-        t = Math.pow(t, expo);
+        const u = clamp01((this.rOut - r) / span);
+        const t = Math.pow(u, expo);
         const w = smooth(t); // smoothstep keeps derivative 0 at both ends
-        part.w[i] = w;
-        part.sinW[i] = Math.sin(Math.PI * w);
-      }
-    }
-    this.lastAppliedD = NaN; // force position refresh with the new weight field
-  }
-
-  /** Apply axial excursion d (world units, signed along `axis`) + bulge. */
-  apply(d: number, strength: number, bulgeK = 0.14): void {
-    // Skip redundant GPU uploads: only refresh when the displacement actually
-    // changed by a perceptible amount (keeps the render loop cheap at rest).
-    if (this.lastAppliedD === d) return;
-    if (Math.abs(d - (isNaN(this.lastAppliedD) ? NaN : this.lastAppliedD)) < 1e-5 && !isNaN(this.lastAppliedD)) return;
-    this.lastAppliedD = d;
-    const bulge = -d * bulgeK * clamp01(strength) * 2.2;
-    for (const part of this.parts) {
-      const attr = part.positionAttr;
-      const arr = attr.array as Float32Array;
-      for (let i = 0; i < part.count; i++) {
+        wArr[i] = w;
+        // analytic dw/dr of the SAME field the shader displaces with:
+        //   w = t²(3-2t), t = u^expo, u = (rOut − r)/span  →  dw/dr < 0
+        let dwdr = 6 * t * (1 - t) * expo * Math.pow(u, expo - 1) / span;
+        if (!isFinite(dwdr)) dwdr = 0;
         const i3 = i * 3;
-        const ax = d * part.w[i];
-        const rad = bulge * part.sinW[i];
-        arr[i3] = part.rest[i3] + part.dirA[i3] * ax + part.dirR[i3] * rad;
-        arr[i3 + 1] = part.rest[i3 + 1] + part.dirA[i3 + 1] * ax + part.dirR[i3 + 1] * rad;
-        arr[i3 + 2] = part.rest[i3 + 2] + part.dirA[i3 + 2] * ax + part.dirR[i3 + 2] * rad;
+        // ∇w(local) = dw/dr · r̂  (r̂ = dirR, the outward radial dir) — the
+        // sign of dw/dr already encodes "w falls with radius"; aKG = ∇w·N.
+        kgArr[i] = dwdr * (dirR[i3] * nAttr.getX(i) + dirR[i3 + 1] * nAttr.getY(i) + dirR[i3 + 2] * nAttr.getZ(i));
       }
-      attr.needsUpdate = true;
-      part.needsNormals = true;
+      part.wAttr.needsUpdate = true;
+      part.kgAttr.needsUpdate = true;
     }
-    this.updateNormals(d);
+    this.lastD = NaN; // force uniform refresh with the new weight field
   }
 
-  /** Normals are throttled: recomputing ~170k triangle normals every single
-   *  frame is wasteful — shading differences below ~0.3 mm of excursion are
-   *  invisible on matte rubber, so we rebuild at most every 90 ms and only
-   *  when the displacement moved by more than 0.25 mm since the last rebuild.
-   *  Every rebuild is flip-guarded against the rest orientation reference:
-   *  computeVertexNormals() derives direction from triangle winding, and
-   *  generated meshes can carry inconsistent winding — unguarded, half the
-   *  roll can end up shading inside-out (near-black) after a rebuild. */
-  private updateNormals(d: number): void {
-    const now = performance.now();
-    const movedEnough = isNaN(this.lastNormalD) || Math.abs(d - this.lastNormalD) > 0.00025;
-    if (!movedEnough || now - this.lastNormalTime < 90) return;
-    this.lastNormalTime = now;
-    this.lastNormalD = d;
+  /** Inject the deformation into a material's vertex shader. Safe to call on
+   *  any MeshStandardMaterial-based material; meshes WITHOUT the deform
+   *  attributes are unaffected (unbound attributes read as 0 → zero
+   *  displacement, zero normal change), so even shared materials are safe. */
+  patchMaterial(mat: THREE.Material): void {
+    if (!mat || this.patched.has(mat) || !('isMeshStandardMaterial' in mat)) return;
+    const shared = this.sharedU;
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uD = shared.uD;
+      shader.uniforms.uBulge = shared.uBulge;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', /* glsl */`#include <common>
+  uniform float uD;
+  uniform float uBulge;
+  attribute vec3 aDirA;
+  attribute vec3 aDirR;
+  attribute float aW;
+  attribute float aKG;`)
+        .replace('#include <beginnormal_vertex>', /* glsl */`#include <beginnormal_vertex>
+  {
+    // First-order Jacobian normal update of the displacement field below:
+    // n' = normalize(n − (∂D/∂p)ᵀ·n),  ∂D/∂p ≈ jRow ⊗ ∇w,  ∇w·n = aKG.
+    float cwB = uBulge * PI * cos(PI * aW);
+    vec3 jRow = uD * aDirA + cwB * aDirR;
+    objectNormal = normalize(objectNormal - jRow * aKG);
+  }`)
+        .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
+  transformed += aDirA * (uD * aW) + aDirR * (uBulge * sin(PI * aW));`);
+    };
+    mat.customProgramCacheKey = () => DEFORM_CACHE_KEY;
+    this.patched.add(mat);
+    mat.needsUpdate = true;
+  }
+
+  /** Patch whatever materials the surround meshes currently use. Call once
+   *  after material assignment and again after any finish swap. */
+  refreshMaterials(): void {
     for (const part of this.parts) {
-      if (part.needsNormals) {
-        this.rebuildNormalsGuarded(part);
-        part.needsNormals = false;
-      }
+      const mats = Array.isArray(part.mesh.material) ? part.mesh.material : [part.mesh.material];
+      for (const m of mats) this.patchMaterial(m);
     }
   }
 
-  /** computeVertexNormals() + orientation guard against the rest reference. */
-  private rebuildNormalsGuarded(part: DeformPart): void {
-    const geo = part.mesh.geometry;
-    geo.computeVertexNormals();
-    const ref = part.refNormals;
-    const nAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
-    if (!nAttr) return;
-    if (ref) {
+  /** Apply axial excursion d (world units, signed along `axis`) + bulge.
+   *  GPU path: this only writes uniforms — the vertex shader does the rest. */
+  apply(d: number, strength: number, bulgeK = 0.14): void {
+    if (!isFinite(d)) d = 0;
+    const bulge = -d * bulgeK * clamp01(strength) * 2.2;
+    if (d === this.lastD && bulge === this.lastBulge) return;
+    this.lastD = d;
+    this.lastBulge = bulge;
+    this.sharedU.uD.value = d;
+    this.sharedU.uBulge.value = bulge;
+  }
+
+  /** Current LOCAL-space z bounds of each deformed surround part. Test-hook
+   *  replacement for geometry.computeBoundingBox() (which now always sees
+   *  rest positions — the deformation lives on the GPU). */
+  getDeformedBoundsZ(): Record<number, { min: number; max: number }> {
+    const uD = this.sharedU.uD.value;
+    const uBulge = this.sharedU.uBulge.value;
+    const out: Record<number, { min: number; max: number }> = {};
+    for (const part of this.parts) {
+      const wArr = part.wAttr.array as Float32Array;
+      let min = Infinity, max = -Infinity;
       for (let i = 0; i < part.count; i++) {
-        const nx = nAttr.getX(i), ny = nAttr.getY(i), nz = nAttr.getZ(i);
-        if (nx * ref[i * 3] + ny * ref[i * 3 + 1] + nz * ref[i * 3 + 2] < 0) {
-          nAttr.setXYZ(i, -nx, -ny, -nz);
-        }
+        const w = wArr[i];
+        const z = part.rest[i * 3 + 2]
+          + part.dirA[i * 3 + 2] * (uD * w)
+          + part.dirR[i * 3 + 2] * (uBulge * Math.sin(Math.PI * w));
+        if (z < min) min = z;
+        if (z > max) max = z;
       }
+      out[part.index] = { min, max };
     }
-    nAttr.needsUpdate = true;
+    return out;
   }
 
-  /** Restore the exact rest shape. */
+  /** Restore the exact rest pose (uniforms → 0; buffers were never touched). */
   reset(): void {
-    for (const part of this.parts) {
-      const attr = part.positionAttr;
-      (attr.array as Float32Array).set(part.rest);
-      attr.needsUpdate = true;
-      this.rebuildNormalsGuarded(part);
-      part.needsNormals = false;
-    }
-    this.lastAppliedD = 0;
-    this.lastNormalD = 0;
-    this.lastNormalTime = performance.now();
+    this.sharedU.uD.value = 0;
+    this.sharedU.uBulge.value = 0;
+    this.lastD = 0;
+    this.lastBulge = 0;
+  }
+
+  /** Direct uniform access for automated tests (acceptance test asserts the
+   *  GPU path is actually driven by the physics displacement). */
+  getUniformsForTest(): DeformUniforms {
+    return this.sharedU;
   }
 }

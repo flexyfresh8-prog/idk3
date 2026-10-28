@@ -70,11 +70,25 @@ async function boot(): Promise<void> {
     mats.applyTo(p.mesh, p.spec.material);
     kindList.push({ mesh: p.mesh, kind: p.spec.material });
   }
+  // Shadows are the second full scene render — keep casters to the parts
+  // whose silhouettes actually matter (enclosure drum + moving assembly).
+  // Motor internals are invisible inside the drum and the surround is
+  // coplanar with the frame: casting from all 48 meshes doubled the triangle
+  // load (1.9M -> shadow pass) for no visible benefit. Cuts the shadow pass
+  // by ~49%.
+  for (const p of audit.parts) {
+    const g = p.spec.group;
+    p.mesh.castShadow = g === 'enclosure' || g === 'moving';
+  }
 
   // ---------------- mechanics
   const deformer = new SurroundDeformer(
     audit.surroundParts, audit.axis, audit.axisPoint, audit.rInGlobal, audit.rOutGlobal
   );
+  // GPU deformation: inject the displacement field into whatever materials
+  // the surround meshes wear (re-run after every finish swap — new material
+  // instances are built per finish pack).
+  deformer.refreshMaterials();
   // +1/-1: converts "positive = outward excursion" into motion along the
   // model axis (this model fires toward −Z, so outwardSign = −1).
   const outwardSign = audit.outward.dot(audit.axis) >= 0 ? 1 : -1;
@@ -132,6 +146,11 @@ async function boot(): Promise<void> {
     onSelect: () => { /* highlight handled in loop */ },
     onVisibility: (part, visible) => { perPartVisible.set(part.index, visible); applyVisibility(); },
     onSolo: () => applyVisibility(),
+    onMaterialClone: (part, clone) => {
+      // Highlight clones lose onBeforeCompile — re-inject the deform shader
+      // so a selected surround keeps deforming while it pulses.
+      if (part.spec.group === 'surround') deformer.patchMaterial(clone);
+    },
     onResetTransform: (part: AuditedPart) => {
       if (assembly.memberParts.includes(part)) {
         assembly.detachPart(part);
@@ -254,6 +273,7 @@ async function boot(): Promise<void> {
     btn.appendChild(txt);
     btn.addEventListener('click', () => {
       mats.setFinish(f.id, kindList);
+      deformer.refreshMaterials(); // new material instances need the deform patch
       finishList.querySelectorAll('.finish-swatch').forEach((b) => b.classList.toggle('active', (b as HTMLElement).dataset.finish === f.id));
       toast(`Finish: ${f.label}.`, 'info');
     });
@@ -289,7 +309,8 @@ async function boot(): Promise<void> {
     // Le(x) inductance droop, nonlinear Bl(x), Duffing spring + box air load)
     // driven by the actual bass waveform samples, integrated with RK4 one
     // step per audio sample. Voltage is calibrated so a full-scale
-    // (AGC-normalized) note at resonance produces ≈ maxExcursion of travel.
+    // (AGC-normalized) note at resonance drives the cone to ≈ 1.75 × Xmax —
+    // heavy bass passages visibly MAX OUT the suspension (≈ 1.3 × Xmax hits).
     const maxUnits = params.maxExcursionMM * MM;
     const vGain = calibratedVoltageGain(maxUnits, params.resonanceHz, params.boxLoad)
       * params.bassSensitivity * params.animationIntensity;
@@ -377,8 +398,10 @@ async function boot(): Promise<void> {
     /** Focus (no-UI) mode controls for tests/automation. */
     setNoUi: (on: boolean) => applyNoUi(on),
     isNoUi: () => document.body.classList.contains('noui'),
-    /** Numerical acceptance probe: world Z of the moving parts + local axial
-     *  extent of the three deformed surround meshes (rest z span ≈ fixed). */
+    /** Numerical acceptance probe: world Z of the moving parts + deformed
+     *  local axial extent of the three surround meshes. The surround bounds
+     *  come from the deformer's analytic field — geometry buffers stay at
+     *  REST since the deformation runs in the vertex shader. */
     probe: () => {
       const out: Record<string, number> = {};
       const wp = new THREE.Vector3();
@@ -386,16 +409,21 @@ async function boot(): Promise<void> {
       cone?.mesh.getWorldPosition(wp); out.coneZ = +wp.z.toFixed(5);
       cap?.mesh.getWorldPosition(wp); out.capZ = +wp.z.toFixed(5);
       coil?.mesh.getWorldPosition(wp); out.coilZ = +wp.z.toFixed(5);
+      const dz = deformer.getDeformedBoundsZ();
       for (const idx of [19, 15, 4]) {
-        const m = audit.byIndex.get(idx)?.mesh;
-        if (!m) continue;
-        m.geometry.computeBoundingBox();
-        const bb = m.geometry.boundingBox!;
-        out[`sur${idx}MinZ`] = +bb.min.z.toFixed(5);
-        out[`sur${idx}MaxZ`] = +bb.max.z.toFixed(5);
+        const b = dz[idx];
+        if (!b) continue;
+        out[`sur${idx}MinZ`] = +b.min.toFixed(5);
+        out[`sur${idx}MaxZ`] = +b.max.toFixed(5);
       }
       out.currentDmm = +assembly.currentD.toFixed(3);
       return out;
+    },
+    /** GPU-deform wiring check (test hook): the shared uniforms the surround
+     *  shader reads. */
+    deformState: () => {
+      const u = deformer.getUniformsForTest();
+      return { uD: +u.uD.value.toFixed(6), uBulge: +u.uBulge.value.toFixed(6) };
     },
     /** Surround normal-orientation diagnostic: how outward-facing are the
      *  current vertex normals of each surround mesh? A healthy half-roll has

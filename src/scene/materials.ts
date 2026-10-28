@@ -93,7 +93,7 @@ export const FINISHES: FinishDef[] = [
 
 interface Palette {
   cone: { base: string; strandA: [number, number, number]; strandB: [number, number, number]; speck: [number, number, number]; rough: string; resin: string };
-  rubber: { base: string; grain: [number, number, number]; rough: string };
+  rubber: { base: string; mottle: [number, number, number]; grain: [number, number, number]; rough: string };
   cap: { top: string; bottom: string; speck: [number, number, number]; rough: string };
   coil: { warp: string; weft: string; sheen: number; rough: string };
   metal: { base: string; streak: [number, number, number]; rough: string };
@@ -105,7 +105,7 @@ interface Palette {
 const PALETTES: Record<string, Palette> = {
   obsidian: {
     cone: { base: '#26282d', strandA: [40, 42, 48], strandB: [34, 36, 42], speck: [30, 32, 38], rough: '#a8a8a8', resin: '#8f8f8f' },
-    rubber: { base: '#3f444b', grain: [56, 60, 68], rough: '#d4d4d4' },
+    rubber: { base: '#5c626b', mottle: [108, 115, 125], grain: [42, 46, 52], rough: '#b0b0b0' },
     cap: { top: '#23262c', bottom: '#1a1d22', speck: [30, 34, 42], rough: '#3c3c3c' },
     coil: { warp: '#3c4046', weft: '#20242a', sheen: 0.05, rough: '#8a8a8a' },
     metal: { base: '#6a7078', streak: [86, 92, 102], rough: '#6f6f6f' },
@@ -115,7 +115,7 @@ const PALETTES: Record<string, Palette> = {
   },
   copperhead: {
     cone: { base: '#1d1f24', strandA: [58, 46, 36], strandB: [44, 36, 30], speck: [40, 34, 28], rough: '#969696', resin: '#6e6055' },
-    rubber: { base: '#2e3136', grain: [44, 48, 54], rough: '#dcdcdc' },
+    rubber: { base: '#50555d', mottle: [94, 100, 109], grain: [38, 42, 48], rough: '#b4b4b4' },
     cap: { top: '#26221c', bottom: '#1b1916', speck: [64, 48, 32], rough: '#343434' },
     coil: { warp: '#a05a2c', weft: '#5c3018', sheen: 0.12, rough: '#5e5e5e' },
     metal: { base: '#57503f', streak: [96, 86, 66], rough: '#64645e' },
@@ -129,7 +129,7 @@ const PALETTES: Record<string, Palette> = {
   },
   arctic: {
     cone: { base: '#d8dde2', strandA: [176, 184, 194], strandB: [158, 166, 178], speck: [148, 156, 168], rough: '#7c7c7c', resin: '#6a6a6a' },
-    rubber: { base: '#a9b1ba', grain: [130, 138, 148], rough: '#dedede' },
+    rubber: { base: '#aab2bb', mottle: [198, 206, 214], grain: [120, 128, 138], rough: '#d2d2d2' },
     cap: { top: '#cfd6dc', bottom: '#bfc7cf', speck: [120, 128, 138], rough: '#464646' },
     coil: { warp: '#9aa2ab', weft: '#6d757e', sheen: 0.1, rough: '#7a7a7a' },
     metal: { base: '#b9c0c7', streak: [220, 226, 232], rough: '#5c5c5c' },
@@ -143,7 +143,7 @@ const PALETTES: Record<string, Palette> = {
   },
   heritage: {
     cone: { base: '#b08d5f', strandA: [150, 118, 78], strandB: [128, 100, 66], speck: [110, 86, 56], rough: '#b6b6b6', resin: '#8a7a62' },
-    rubber: { base: '#cfc4ae', grain: [168, 158, 138], rough: '#e2e2e2' },
+    rubber: { base: '#cfc4ae', mottle: [224, 216, 198], grain: [156, 146, 126], rough: '#e2e2e2' },
     cap: { top: '#5e2a2a', bottom: '#4c2222', speck: [90, 44, 44], rough: '#4a4a4a' },
     coil: { warp: '#9c7b3c', weft: '#6b5226', sheen: 0.1, rough: '#8a8a8a' },
     metal: { base: '#8a7340', streak: [176, 150, 92], rough: '#787870' },
@@ -151,7 +151,7 @@ const PALETTES: Record<string, Palette> = {
     box: { base: '#33201f', tuft: [62, 40, 38], rough: '#cccccc' },
     mat: {
       cone: { roughness: 0.88, metalness: 0.0, clearcoat: 0.06, clearcoatRoughness: 0.7 },
-      rubber: { roughness: 0.95, sheen: 0.4, sheenColor: '#f2e8d0' },
+      rubber: { roughness: 0.95, sheen: 0.4, sheenColor: '#f2e8d0', clearcoat: 0.0 },
       metal: { roughness: 0.46, metalness: 0.88 }
     }
   }
@@ -239,29 +239,56 @@ function coneMaps(p: Palette['cone']): Maps {
   };
 }
 
-/** Matte rubber micro-grain: fine noise + faint mold seams. */
+/** Satin rubber: soft cured mottle + micro-pebble grain + faint mold lines. */
 function rubberMaps(p: Palette['rubber']): Maps {
   const S = 256;
   const { c: albedo, g: a } = makeCanvas(S);
   a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
-  for (let i = 0; i < 5200; i++) {
-    a.fillStyle = rgba(p.grain, 0.05 + Math.random() * 0.12);
-    const s = 0.8 + Math.random() * 1.7;
+
+  // soft lighter mottle — cured-rubber clouding (large, low contrast)
+  for (let i = 0; i < 260; i++) {
+    a.fillStyle = rgba(p.mottle, 0.05 + Math.random() * 0.10);
+    a.beginPath();
+    a.arc(Math.random() * S, Math.random() * S, 4 + Math.random() * 16, 0, Math.PI * 2);
+    a.fill();
+  }
+  // fine dark micro-grain (pebble shadows)
+  for (let i = 0; i < 4200; i++) {
+    a.fillStyle = rgba(p.grain, 0.05 + Math.random() * 0.13);
+    const s = 0.8 + Math.random() * 1.6;
     a.fillRect(Math.random() * S, Math.random() * S, s, s);
   }
+  // light speckle catching grain crests
+  for (let i = 0; i < 1400; i++) {
+    a.fillStyle = rgba(p.mottle, Math.random() * 0.10);
+    a.fillRect(Math.random() * S, Math.random() * S, 1, 1);
+  }
+  // faint circumferential mold/trim lines (run around the roll)
+  for (let i = 0; i < 5; i++) {
+    a.strokeStyle = rgba(p.grain, 0.10 + Math.random() * 0.08);
+    a.lineWidth = 0.8;
+    a.beginPath();
+    const y = Math.random() * S;
+    a.moveTo(0, y);
+    a.lineTo(S, y + (Math.random() - 0.5) * 6);
+    a.stroke();
+  }
+
   const { c: height, g: hh } = makeCanvas(S);
   hh.fillStyle = '#808080';
   hh.fillRect(0, 0, S, S);
-  for (let i = 0; i < 3600; i++) {
-    const v = Math.random() > 0.5 ? 150 : 95;
-    hh.fillStyle = `rgba(${v},${v},${v},${Math.random() * 0.4})`;
-    const s = 0.8 + Math.random() * 1.8;
-    hh.fillRect(Math.random() * S, Math.random() * S, s, s);
+  // pebbled micro-bumps, both directions of relief
+  for (let i = 0; i < 3200; i++) {
+    const v = Math.random() > 0.5 ? 158 : 98;
+    hh.fillStyle = `rgba(${v},${v},${v},${Math.random() * 0.42})`;
+    hh.beginPath();
+    hh.arc(Math.random() * S, Math.random() * S, 0.45 + Math.random() * 0.95, 0, Math.PI * 2);
+    hh.fill();
   }
-  // subtle mold parting lines
-  for (let i = 0; i < 3; i++) {
-    hh.strokeStyle = 'rgba(60,60,60,0.5)';
+  // mold parting lines
+  for (let i = 0; i < 5; i++) {
+    hh.strokeStyle = 'rgba(64,64,64,0.5)';
     hh.lineWidth = 1;
     hh.beginPath();
     const y = Math.random() * S;
@@ -269,17 +296,20 @@ function rubberMaps(p: Palette['rubber']): Maps {
     hh.lineTo(S, y + (Math.random() - 0.5) * 8);
     hh.stroke();
   }
+  // roughness: satin base with slightly glossier worn patches
   const { c: rough, g: r } = makeCanvas(S);
   r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
-  for (let i = 0; i < 700; i++) {
-    const v = 175 + Math.random() * 70;
-    r.fillStyle = `rgba(${v},${v},${v},0.4)`;
-    r.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 4, 2 + Math.random() * 4);
+  for (let i = 0; i < 650; i++) {
+    const v = 150 + Math.random() * 80;
+    r.fillStyle = `rgba(${v},${v},${v},0.35)`;
+    r.beginPath();
+    r.arc(Math.random() * S, Math.random() * S, 2 + Math.random() * 7, 0, Math.PI * 2);
+    r.fill();
   }
   return {
-    map: toTexture(albedo, true, 4),
-    normalMap: normalFromHeight(height, 1.1),
+    map: toTexture(albedo, true, 3),
+    normalMap: normalFromHeight(height, 1.15),
     roughnessMap: roughFromGray(rough)
   };
 }
@@ -539,8 +569,10 @@ export class MaterialLibrary {
 
     const rubber = new THREE.MeshPhysicalMaterial({
       color: '#ffffff', metalness: 0.0, side: THREE.DoubleSide,
-      sheenRoughness: 0.7, sheenColor: new THREE.Color('#3a4250'),
-      roughness: 0.92, sheen: 0.35, ...rubberMaps(p.rubber), ...over('rubber')
+      roughness: 0.68, sheen: 0.55, sheenRoughness: 0.42,
+      sheenColor: new THREE.Color('#8d959f'),
+      clearcoat: 0.10, clearcoatRoughness: 0.55,
+      ...rubberMaps(p.rubber), ...over('rubber')
     });
     const cone = new THREE.MeshPhysicalMaterial({
       color: '#ffffff', metalness: 0.06,

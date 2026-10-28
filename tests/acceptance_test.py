@@ -68,6 +68,16 @@ def run():
         exact = all(abs(back[k] - rest[k]) < 1e-5 for k in rest)
         check("Exact return to rest shape", exact, "probe(back)==probe(rest)")
 
+        # 6b. surround normal health — regression guard for the "black surround"
+        # bug: quantized Int8 GLB normals + computeVertexNormals truncation.
+        # Healthy = every sampled normal is a non-zero vector at rest.
+        page.evaluate("window.__sim.forceDisplacement(6); window.__simRenderOnce()")
+        page.evaluate("window.__sim.forceDisplacement(0); window.__simRenderOnce()")
+        normals = page.evaluate("window.__sim.surroundNormals()")
+        nstat = {k: v for k, v in normals.items() if isinstance(v, dict) and v.get("hasNormals")}
+        healthy = all(v.get("nonZero", 0) >= v.get("sampled", 1) * 0.99 for v in nstat.values())
+        check("Surround normals healthy (no zero-normal black shading)", healthy, json.dumps(normals))
+
         # 7-10. audio pipeline with a real MP3
         page.evaluate("""async () => {
           window.__r = 'pending';

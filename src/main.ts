@@ -341,7 +341,59 @@ async function boot(): Promise<void> {
       out.currentDmm = +assembly.currentD.toFixed(3);
       return out;
     },
-    stats: () => ({ parts: audit.parts.length, verts: audit.parts.reduce((s, p) => s + p.verts, 0), tris: audit.parts.reduce((s, p) => s + p.tris, 0) })
+    /** Surround normal-orientation diagnostic: how outward-facing are the
+     *  current vertex normals of each surround mesh? A healthy half-roll has
+     *  outwardDot clearly positive; ~0 means half the faces are flipped
+     *  (inconsistent winding — e.g. after an unguarded computeVertexNormals).
+     *  flippedAtRest: fraction of vertices whose current normal opposes the
+     *  AUTHORED GLB normal (captured before the first deformer pass). */
+    surroundNormals: () => {
+      const out: Record<string, unknown> = {};
+      const v = new THREE.Vector3(), n = new THREE.Vector3(), rad = new THREE.Vector3();
+      for (const idx of [19, 15, 4]) {
+        const p = audit.byIndex.get(idx);
+        if (!p) continue;
+        const geo = p.mesh.geometry;
+        const posAttr = geo.getAttribute('position') as THREE.BufferAttribute;
+        const nAttr = geo.getAttribute('normal') as THREE.BufferAttribute | undefined;
+        if (!nAttr) { out[`m${idx}`] = { hasNormals: false, verts: posAttr.count }; continue; }
+        const authored = (geo.userData as { authoredNormals?: Float32Array }).authoredNormals;
+        p.mesh.updateWorldMatrix(true, false);
+        let outwardSum = 0, flipVsAuthored = 0, sampled = 0;
+        const step = Math.max(1, Math.floor(posAttr.count / 500));
+        for (let i = 0; i < posAttr.count; i += step) {
+          v.fromBufferAttribute(posAttr, i).applyMatrix4(p.mesh.matrixWorld);
+          n.fromBufferAttribute(nAttr, i).transformDirection(p.mesh.matrixWorld);
+          rad.copy(v).sub(audit.axisPoint);
+          rad.addScaledVector(audit.axis, -rad.dot(audit.axis)).normalize();
+          outwardSum += n.dot(rad);
+          if (authored) {
+            const a = new THREE.Vector3(authored[i * 3], authored[i * 3 + 1], authored[i * 3 + 2]).normalize();
+            if (a.dot(n) < 0) flipVsAuthored++;
+          }
+          sampled++;
+        }
+        out[`m${idx}`] = {
+          hasNormals: true, verts: posAttr.count, sampled,
+          outwardDot: +(outwardSum / sampled).toFixed(3),
+          hasAuthored: !!authored,
+          flippedFrac: authored ? +(flipVsAuthored / sampled).toFixed(3) : null,
+          // raw-data sanity: how many sampled normals are non-zero vectors?
+          nonZero: (() => {
+            let k = 0;
+            for (let i = 0; i < posAttr.count; i += step) {
+              if (nAttr.getX(i) !== 0 || nAttr.getY(i) !== 0 || nAttr.getZ(i) !== 0) k++;
+            }
+            return k;
+          })(),
+          normalVersion: nAttr.version
+        };
+      }
+      return out;
+    },
+    stats: () => ({ parts: audit.parts.length, verts: audit.parts.reduce((s, p) => s + p.verts, 0), tris: audit.parts.reduce((s, p) => s + p.tris, 0) }),
+    /** Direct mesh access for diagnostics / browser-side verification. */
+    mesh: (index: number) => audit.byIndex.get(index)?.mesh ?? null
   };
 
   loadingEl.classList.remove('show');

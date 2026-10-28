@@ -1,0 +1,278 @@
+// idk3 — interactive subwoofer simulator (entry point)
+// Loads the supplied GLB, verifies the component mapping, and drives the
+// whole audio-reactive simulation loop.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import './style.css';
+
+import { DEFAULT_PARAMS, type SimParams } from './core/types';
+import { auditModel, type AuditResult, type AuditedPart } from './core/gltfAudit';
+import { SurroundDeformer } from './core/surroundDeform';
+import { ConeAssembly } from './core/assembly';
+import { ExcursionPhysics } from './core/physics';
+import { AudioEngine } from './audio/audioEngine';
+import { Stage } from './scene/stage';
+import { MaterialLibrary } from './scene/materials';
+import { ParamsPanel } from './ui/paramsPanel';
+import { Inspector } from './ui/inspector';
+import { PlayerUI } from './ui/playerUI';
+
+const MODEL_URL = `${import.meta.env.BASE_URL}models/tripo_model_1793179198729.glb`;
+const MM = 0.001; // glTF units are meters
+
+const params: SimParams = { ...DEFAULT_PARAMS };
+const engine = new AudioEngine();
+const physics = new ExcursionPhysics();
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const loadingEl = $('loading');
+const loadingText = $('loading-text');
+const viewport = $('viewport');
+
+function toast(msg: string, kind: 'info' | 'error' = 'info'): void {
+  const box = $('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  box.appendChild(el);
+  window.setTimeout(() => el.remove(), 5200);
+}
+
+// ------------------------------------------------------------------ boot
+async function boot(): Promise<void> {
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder as any);
+
+  const gltf = await new Promise<any>((resolve, reject) => {
+    loader.load(
+      MODEL_URL,
+      (g) => resolve(g),
+      (ev) => {
+        if (ev.total > 0) loadingText.textContent = `Loading subwoofer model… ${(ev.loaded / ev.total * 100).toFixed(0)}%`;
+        else loadingText.textContent = `Loading subwoofer model… ${(ev.loaded / 1048576).toFixed(1)} MB`;
+      },
+      (err) => reject(new Error(`Model failed to load: ${err}`))
+    );
+  });
+
+  const root: THREE.Object3D = gltf.scene;
+  const audit: AuditResult = auditModel(root);
+
+  // ---------------- scene
+  const stage = new Stage(viewport, audit.modelCenter, audit.modelRadius);
+  stage.scene.add(root);
+
+  const mats = new MaterialLibrary();
+  const kindList: { mesh: THREE.Mesh; kind: any }[] = [];
+  for (const p of audit.parts) {
+    mats.applyTo(p.mesh, p.spec.material);
+    kindList.push({ mesh: p.mesh, kind: p.spec.material });
+  }
+
+  // ---------------- mechanics
+  const deformer = new SurroundDeformer(
+    audit.surroundParts, audit.axis, audit.axisPoint, audit.rInGlobal, audit.rOutGlobal
+  );
+  const outwardSign = audit.outward.z < 0 ? -1 : 1;
+  const assembly = new ConeAssembly(audit.axis, outwardSign);
+  assembly.attach(audit.movingParts);
+  stage.scene.add(assembly.group);
+
+  // ---------------- UI: verification notes
+  const verifyList = $('verify-list');
+  for (const n of audit.notes) {
+    const li = document.createElement('li');
+    li.textContent = n;
+    verifyList.appendChild(li);
+  }
+
+  // ---------------- visibility system
+  const perPartVisible = new Map<number, boolean>();
+  const groupChecks = {
+    enclosure: $('vis-enclosure') as HTMLInputElement,
+    frame: $('vis-frame') as HTMLInputElement,
+    motor: $('vis-internals') as HTMLInputElement
+  };
+
+  function applyVisibility(): void {
+    const solo = inspector.soloPart;
+    for (const p of audit.parts) {
+      let vis: boolean;
+      if (solo) vis = solo === p;
+      else if (perPartVisible.has(p.index)) vis = perPartVisible.get(p.index)!;
+      else {
+        switch (p.spec.group) {
+          case 'enclosure': vis = groupChecks.enclosure.checked; break;
+          case 'frame': vis = groupChecks.frame.checked; break;
+          case 'motor': vis = groupChecks.motor.checked; break;
+          default: vis = true;
+        }
+      }
+      p.mesh.visible = vis;
+    }
+    assembly.group.visible = audit.movingParts.some((p) => p.mesh.visible);
+  }
+
+  function setMode(next: 'full' | 'driver'): void {
+    $('mode-full').classList.toggle('active', next === 'full');
+    $('mode-driver').classList.toggle('active', next === 'driver');
+    ($('mode-full') as HTMLButtonElement).setAttribute('aria-selected', String(next === 'full'));
+    ($('mode-driver') as HTMLButtonElement).setAttribute('aria-selected', String(next === 'driver'));
+    if (next === 'driver') groupChecks.enclosure.checked = false; // driver-only preset
+    applyVisibility();
+    toast(next === 'driver' ? 'Driver-only view — enclosure drum hidden.' : 'Complete subwoofer view.', 'info');
+  }
+
+  // ---------------- UI: inspector
+  const inspector = new Inspector($('component-list'), audit.parts, {
+    onSelect: () => { /* highlight handled in loop */ },
+    onVisibility: (part, visible) => { perPartVisible.set(part.index, visible); applyVisibility(); },
+    onSolo: () => applyVisibility(),
+    onResetTransform: (part: AuditedPart) => {
+      if (assembly.memberParts.includes(part)) {
+        assembly.detachPart(part);
+        toast(`${part.spec.label} detached from the moving assembly and reset.`);
+      } else {
+        part.mesh.position.copy(part.restPosition);
+        part.mesh.quaternion.copy(part.restQuaternion);
+        part.mesh.scale.copy(part.restScale);
+        toast(`${part.spec.label} transform reset.`);
+      }
+    }
+  });
+
+  // ---------------- UI: params
+  const paramsPanel = new ParamsPanel($('params'), params);
+  paramsPanel.onChange = (key, value) => {
+    if (key === 'audioGain') engine.setGain(value);
+    if (key === 'lfCutoffHz') engine.setLfCutoff(value);
+    if (key === 'surroundFlexibility') deformer.rebuildWeights(value);
+  };
+  paramsPanel.onReset = () => {
+    resetSim();
+    toast('Simulation reset to defaults.');
+  };
+
+  // ---------------- UI: player
+  const player = new PlayerUI(engine, {
+    fileChip: $('file-chip'),
+    playBtn: $('play-btn') as HTMLButtonElement,
+    restartBtn: $('restart-btn') as HTMLButtonElement,
+    seek: $('seek') as HTMLInputElement,
+    time: $('time'),
+    volume: $('volume') as HTMLInputElement,
+    muteBtn: $('mute-btn') as HTMLButtonElement,
+    importBtn: $('import-btn') as HTMLButtonElement,
+    testBtn: $('test-btn') as HTMLButtonElement,
+    spectrum: $('spectrum') as HTMLCanvasElement,
+    bassBar: $('bar-bass'), midBar: $('bar-mid'), highBar: $('bar-high'),
+    excursionOut: $('excursion-out'),
+    dropOverlay: $('drop-overlay'),
+    toast
+  });
+
+  // ---------------- header + mobile buttons
+  $('reset-cam').addEventListener('click', () => stage.resetCamera());
+  $('top-reset-sim').addEventListener('click', () => { resetSim(); toast('Simulation reset to defaults.'); });
+  for (const [btn, panel] of [['toggle-left', 'left-panel'], ['toggle-right', 'right-panel']] as const) {
+    $(btn).addEventListener('click', () => {
+      const el = $(panel);
+      const open = el.classList.toggle('open');
+      ($(btn) as HTMLButtonElement).setAttribute('aria-expanded', String(open));
+    });
+  }
+
+  groupChecks.enclosure.addEventListener('change', applyVisibility);
+  groupChecks.frame.addEventListener('change', applyVisibility);
+  groupChecks.motor.addEventListener('change', applyVisibility);
+  $('vis-fiber').addEventListener('change', (e) => mats.setFiberDetail((e.target as HTMLInputElement).checked));
+  $('vis-studio').addEventListener('change', (e) => {
+    mats.setMode((e.target as HTMLInputElement).checked ? 'studio' : 'original', kindList);
+  });
+
+  function resetSim(): void {
+    paramsPanel.resetToDefaults();
+    physics.reset();
+    deformer.reset();
+    assembly.reset();
+    engine.setGain(params.audioGain);
+    engine.setLfCutoff(params.lfCutoffHz);
+  }
+
+  // ------------------------------------------------------------------ loop
+  let last = performance.now();
+  let uiAccum = 0;
+  const lastFrame = { drive: 0, bass: 0, mid: 0, high: 0, playing: false, rms: 0, peak: 0 };
+
+  function loop(now: number): void {
+    requestAnimationFrame(loop);
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    const frame = engine.frame(dt, params.hfCutoffHz);
+
+    // drive -> excursion target (world units)
+    const maxUnits = params.maxExcursionMM * MM;
+    const punchMix = 0.62 + 0.38 * engine.punch;
+    const target = frame.drive * params.bassSensitivity * params.animationIntensity * punchMix * maxUnits;
+    const d = physics.update(dt, target, maxUnits * 1.12, params.smoothing);
+
+    assembly.setDisplacement(d, params.coilFollow);
+    deformer.apply(d, params.surroundStrength);
+    inspector.updateHighlight(dt);
+
+    lastFrame.drive = frame.drive;
+    lastFrame.bass = frame.bass;
+    lastFrame.mid = frame.mid;
+    lastFrame.high = frame.high;
+    lastFrame.rms = frame.rms;
+    lastFrame.peak = frame.peak;
+    lastFrame.playing = frame.playing || engine.testToneActive;
+
+    uiAccum += dt;
+    if (uiAccum > 1 / 30) {
+      uiAccum = 0;
+      player.frame();
+      player.setLevels(frame.bass, frame.mid, frame.high, assembly.currentD);
+      player.drawSpectrum(lastFrame.playing ? frame.spectrum : null, engine.sampleRate);
+    }
+
+    stage.tick(dt);
+  }
+  requestAnimationFrame(loop);
+
+  // ------------------------------------------------------------------ test hook (used by automated browser tests)
+  (window as any).__sim = {
+    version: '1.0.0',
+    mapping: () => audit.parts.map((p) => ({
+      index: p.index, name: p.nodeName, label: p.spec.label, role: p.spec.role,
+      group: p.spec.group, verts: p.verts, tris: p.tris,
+      rIn: +p.rIn.toFixed(4), rOut: +p.rOut.toFixed(4), visible: p.mesh.visible
+    })),
+    surround: () => ({ rIn: audit.rInGlobal, rOut: audit.rOutGlobal, coneRim: audit.coneRimRadius, parts: audit.surroundParts.map((p) => p.index) }),
+    axis: () => ({ axis: audit.axis.toArray(), outward: audit.outward.toArray() }),
+    params,
+    displacementMM: () => assembly.currentD,
+    frame: () => ({ ...lastFrame }),
+    engine,
+    startTestTone: () => engine.startTestTone(),
+    stopTestTone: () => engine.stopTestTone(),
+    setMode,
+    applyVisibility,
+    loadFile: (f: File) => player.loadFile(f),
+    resetSim,
+    stats: () => ({ parts: audit.parts.length, verts: audit.parts.reduce((s, p) => s + p.verts, 0), tris: audit.parts.reduce((s, p) => s + p.tris, 0) })
+  };
+
+  loadingEl.classList.remove('show');
+  toast(`Model loaded — ${audit.parts.length} parts identified. Import an MP3 or start the bass test tone.`, 'info');
+}
+
+boot().catch((err) => {
+  console.error(err);
+  loadingText.textContent = err.message || 'Failed to load the model.';
+  loadingEl.querySelector('.loader-ring')?.remove();
+  toast(err.message || 'Failed to load.', 'error');
+});

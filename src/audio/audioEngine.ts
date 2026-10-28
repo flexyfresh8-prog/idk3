@@ -8,14 +8,14 @@
 //                                                └─► fullAnalyser                 (spectrum / RMS metering)
 //
 // The cone drive signal is the *actual low-frequency content* of the audio:
-// we read the time-domain output of the cascaded low-pass and take a short
-// recent-window mean, which tracks the signed phase of the bass waveform.
-// An automatic-gain stage normalizes different tracks, a punch envelope adds
-// transient kick, and the spring in physics.ts turns it into excursion.
-// This is a visually convincing approximation — NOT measured physical Xmax.
+// we read the time-domain output of the cascaded low-pass, DC-block it, and
+// normalize it with an automatic-gain stage. The RAW SAMPLES are handed to
+// physics.ts (one mechanical step per audio sample — true dot-to-dot motion).
+// A short-window mean is kept only for the level meters, and the punch
+// envelope is metering-only (it never drives the cone).
 
 export interface AudioFrame {
-  drive: number;      // signed, roughly −1.2..1.2 after AGC
+  drive: number;      // signed short-window mean, roughly −1.2..1.2 after AGC (meters only)
   rms: number;        // full-band RMS 0..1
   peak: number;       // full-band peak 0..1
   bass: number;       // band energy 0..1 (20 Hz..hfCutoff)
@@ -23,6 +23,8 @@ export interface AudioFrame {
   high: number;       // band energy (2 kHz..16 kHz)
   spectrum: Uint8Array; // 0..255 per bin (log-mapped by the UI)
   playing: boolean;
+  driveSamples: Float32Array | null; // AGC-normalized low-passed waveform (physics input)
+  driveSampleRate: number;           // sample rate of driveSamples
 }
 
 const FFT_SIZE = 2048;
@@ -39,6 +41,7 @@ export class AudioEngine {
   private fullAnalyser: AnalyserNode | null = null;
 
   private driveBuf = new Float32Array(FFT_SIZE);
+  private driveNorm = new Float32Array(FFT_SIZE);
   private timeBuf = new Float32Array(FFT_SIZE);
   private specBuf = new Uint8Array(FFT_SIZE / 2);
 
@@ -203,22 +206,40 @@ export class AudioEngine {
     const playing = !this.el.paused && !this.el.ended && (!!this.el.src);
     const testActive = this.testToneActive;
     let drive = 0, rms = 0, peak = 0, bass = 0, mid = 0, high = 0;
+    let hasDrive = false;
+    let driveRate = 0;
 
     if (this.ctx && (playing || testActive)) {
-      // signed drive from the low-passed bass tap (recent window mean)
+      // low-passed bass tap: DC-block, AGC-normalize, hand RAW samples to physics
       if (this.bassAnalyser) {
         this.bassAnalyser.getFloatTimeDomainData(this.driveBuf);
-        const N = 256; // ≈5.3 ms at 48 kHz — tracks bass waveform phase
+        // DC blocker: subtract the chunk mean (real amps have no DC path)
+        let mean = 0;
+        for (let i = 0; i < this.driveBuf.length; i++) mean += this.driveBuf[i];
+        mean /= this.driveBuf.length;
+        // AGC reference: chunk peak with slow decay → track-independent scaling
+        let peakAbs = 0;
+        for (let i = 0; i < this.driveBuf.length; i++) {
+          const a = Math.abs(this.driveBuf[i] - mean);
+          if (a > peakAbs) peakAbs = a;
+        }
+        this.refLevel = Math.max(peakAbs, this.refLevel - this.refLevel * dt * 0.25, 0.02);
+        const inv = 1 / this.refLevel;
+        for (let i = 0; i < this.driveBuf.length; i++) {
+          const s = (this.driveBuf[i] - mean) * inv;
+          this.driveNorm[i] = s > 1.4 ? 1.4 : s < -1.4 ? -1.4 : s;
+        }
+        // scalar drive (meters only): short recent mean, phase-aware
+        const N = 256; // ≈5.3 ms at 48 kHz
         let s = 0;
-        for (let i = this.driveBuf.length - N; i < this.driveBuf.length; i++) s += this.driveBuf[i];
-        const recent = s / N;
-        // AGC: slow-decaying reference
-        const a = Math.abs(recent);
-        this.refLevel = Math.max(a, this.refLevel - this.refLevel * dt * 0.25, 0.02);
-        drive = Math.max(-1.4, Math.min(1.4, recent / this.refLevel));
-        // punch envelope for transients
-        this.envFast = Math.max(a / this.refLevel, this.envFast - dt * 7);
-        this.envSlow = Math.max(a / this.refLevel, this.envSlow - dt * 1.6);
+        for (let i = this.driveBuf.length - N; i < this.driveBuf.length; i++) s += this.driveNorm[i];
+        drive = s / N;
+        // punch envelope (metering only — never drives the cone)
+        const a = Math.abs(drive);
+        this.envFast = Math.max(a, this.envFast - dt * 7);
+        this.envSlow = Math.max(a, this.envSlow - dt * 1.6);
+        driveRate = this.ctx.sampleRate;
+        hasDrive = true;
       }
       // full-band metering
       if (this.fullAnalyser) {
@@ -244,7 +265,11 @@ export class AudioEngine {
       this.envSlow = Math.max(0, this.envSlow - dt * 2);
     }
 
-    return { drive, rms, peak, bass, mid, high, spectrum: this.specBuf, playing };
+    return {
+      drive, rms, peak, bass, mid, high, spectrum: this.specBuf, playing,
+      driveSamples: hasDrive ? this.driveNorm : null,
+      driveSampleRate: driveRate
+    };
   }
 
   /** Punch factor 0..1 for visual emphasis. */

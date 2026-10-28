@@ -20,6 +20,7 @@ import { PlayerUI } from './ui/playerUI';
 
 const MODEL_URL = `${import.meta.env.BASE_URL}models/tripo_model_1793179198729.glb`;
 const MM = 0.001; // glTF units are meters
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 const params: SimParams = { ...DEFAULT_PARAMS };
 const engine = new AudioEngine();
@@ -218,11 +219,19 @@ async function boot(): Promise<void> {
 
     const frame = engine.frame(dt, params.hfCutoffHz);
 
-    // drive -> excursion target (world units, signed: positive = outward)
+    // TRUE dot-to-dot physics: the cone is a mass-spring-damper system driven
+    // by the actual bass waveform samples, integrated one step per audio
+    // sample. Force is calibrated so a full-scale (AGC-normalized) note at
+    // resonance produces ≈ maxExcursion of peak travel.
     const maxUnits = params.maxExcursionMM * MM;
-    const punchMix = 0.62 + 0.38 * engine.punch;
-    const target = frame.drive * params.bassSensitivity * params.animationIntensity * punchMix * maxUnits;
-    const d = debugD !== null ? debugD : physics.update(dt, target, maxUnits * 1.12, params.smoothing);
+    const wn = 2 * Math.PI * 32;                 // driver resonance Fs = 32 Hz
+    const forceGain = wn * wn * maxUnits * 1.25
+      * params.bassSensitivity * params.animationIntensity;
+    const d = debugD !== null ? debugD : physics.stepAudio(frame.driveSamples, frame.driveSampleRate, dt, {
+      forceGain,
+      zeta: 0.30 + 0.55 * clamp01(params.smoothing),
+      maxUnits
+    });
 
     // Both the moving assembly and the surround field use the same signed
     // outward displacement, so the cone rim and the surround inner edge stay

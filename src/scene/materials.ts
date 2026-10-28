@@ -43,7 +43,7 @@ export class MaterialLibrary {
   mode: MaterialMode = 'studio';
 
   constructor() {
-    const rubber = new THREE.MeshStandardMaterial({ color: '#191b1e', roughness: 0.93, metalness: 0.0, side: THREE.DoubleSide });
+    const rubber = new THREE.MeshStandardMaterial({ color: '#4a4f57', roughness: 0.84, metalness: 0.0, side: THREE.DoubleSide });
     const cone = new THREE.MeshStandardMaterial({ color: '#23262b', roughness: 0.62, metalness: 0.05 });
     const cap = new THREE.MeshStandardMaterial({ color: '#1e2125', roughness: 0.42, metalness: 0.12 });
     const metal = new THREE.MeshStandardMaterial({ color: '#33373d', roughness: 0.48, metalness: 0.82 });

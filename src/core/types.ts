@@ -120,7 +120,7 @@ export interface ParamMeta {
 
 export const PARAM_META: ParamMeta[] = [
   { key: 'maxExcursionMM', label: 'Max cone excursion', min: 1, max: 30, step: 0.5, unit: 'mm', kind: 'sim',
-    hint: 'Simulated peak excursion limit (user-defined). Not a measured Xmax of the model.' },
+    hint: 'Xmax of the simulated suspension. Beyond it the spring stiffens progressively (real spider behavior).' },
   { key: 'bassSensitivity', label: 'Bass sensitivity', min: 0.2, max: 4, step: 0.05, unit: '×', kind: 'sim',
     hint: 'How strongly the low-frequency band drives the cone.' },
   { key: 'lfCutoffHz', label: 'Drive low-pass cutoff', min: 40, max: 300, step: 5, unit: 'Hz', kind: 'sim',

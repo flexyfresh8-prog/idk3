@@ -12,9 +12,18 @@ def check(name, ok, detail=""):
     RESULTS.append((name, bool(ok), detail))
     print(f"{'PASS' if ok else 'FAIL'} | {name} | {detail}")
 
+def find_chrome():
+    import glob, os
+    for pat in ("/home/z/.agent-browser/browsers/chrome-*/chrome",
+                os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome")):
+        hits = sorted(glob.glob(pat))
+        if hits:
+            return hits[-1]
+    return None
+
 def run():
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path="/home/z/.agent-browser/browsers/chrome-156.0.8078.73/chrome",
+        browser = pw.chromium.launch(executable_path=find_chrome(),
                                      headless=True, args=["--no-sandbox", "--enable-unsafe-swiftshader"])
         page = browser.new_page(viewport={"width": 1000, "height": 700})
         errors = []

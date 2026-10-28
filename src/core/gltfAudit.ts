@@ -148,10 +148,12 @@ export function auditModel(root: THREE.Object3D): AuditResult {
 
   let rInGlobal = Infinity, rOutGlobal = 0;
   surroundParts.forEach((p) => { rInGlobal = Math.min(rInGlobal, p.rIn); rOutGlobal = Math.max(rOutGlobal, p.rOut); });
-  // push the inner attach radius up to just under the cone rim so every surround
-  // part's inner edge (min 0.216..0.287 across parts) is fully driven by the cone
-  const coneRimRadius = cone ? cone.rOut : rInGlobal + 0.05;
-  rInGlobal = Math.max(rInGlobal, Math.min(coneRimRadius - 0.02, rInGlobal + 0.08));
+  // The inner plateau must cover EVERY part's inner edge (the deepest attach
+  // radius across the three arcs), so all surround parts follow the cone with
+  // w=1 — no detachment at any junction regardless of arc layering.
+  const maxInner = Math.max(...surroundParts.map((p) => p.rIn));
+  rInGlobal = Math.max(rInGlobal, maxInner + 0.004);
+  const coneRimRadius = cone ? cone.rOut : rInGlobal;
 
   // ---- mapping verification notes
   const missing: number[] = [];

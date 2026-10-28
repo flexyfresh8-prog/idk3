@@ -163,6 +163,7 @@ export class AudioEngine {
   // ------------------------------------------------------------ test tone
   startTestTone(): void {
     this.ensureContext();
+    if (this.ctx!.state === 'suspended') void this.ctx!.resume(); // user-gesture handler: resume must happen here (iOS/Safari)
     if (this.testOsc) return;
     const ctx = this.ctx!;
     this.testOsc = ctx.createOscillator();

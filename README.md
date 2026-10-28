@@ -153,7 +153,7 @@ npm run build      # type-checks with tsc, then builds into dist/
 npm run preview    # serves the production build locally
 ```
 
-Automated acceptance tests live in `/scripts/acceptance_test.py` (Playwright;
+Automated acceptance tests live in [`tests/acceptance_test.py`](tests/acceptance_test.py) (Playwright;
 they drive `window.__sim`): 16/17 checks pass in CI-like headless mode — the
 only excluded check is media-element audio output, which requires a real audio
 device (verified instead through the Web Audio oscillator path).

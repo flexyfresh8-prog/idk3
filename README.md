@@ -27,6 +27,21 @@ No uploads, no backend, no accounts: your audio files never leave your device.
   stiffness like a real closed box; a new **Cone moving mass** slider changes
   transient attack and overshoot. Same calibration contract as v2: a
   full-scale note at resonance produces ≈ Xmax of travel.
+- **Excursion calibration fix (v3.1).** v3.0 shipped two defects that squashed
+  the visible travel to ~0–1 mm regardless of the audio: the numerical
+  velocity clamp was frequency-blind (`40·Xmax` = 0.4 m/s — a cone doing
+  ±10 mm at 37 Hz moves at ~2.3 m/s peak, so the clamp silently capped every
+  oscillation at `vMax/ω` ≈ 1–1.8 mm), and the quadratic air-load drag was
+  scaled by a second `/Xmax`, making it ~166× too strong. Both are fixed: the
+  clamp is now `3.5·ωn·Xmax` (pure runaway safety net, 3.5× above the peak
+  velocity at Xmax on resonance) and the drag is normalized to the driver's
+  own operating point (~8 % of the spring force at Xmax, like real radiation
+  loading). The drive gain `GAIN_K·Xmax·ωe` was re-solved numerically against
+  the full nonlinear model: a full-scale (±1.4 AGC) sine at the boxed
+  resonance now lands at 1.25 × Xmax ±7 % across the entire slider ranges
+  (Xmax 2–30 mm, boxLoad 0–1, ζ 0.30–0.85), verified by an offline RK4
+  replica (`tests/physics_validate.py`) and a new acceptance check that
+  fails if the test tone peaks below 3 mm or above 20 mm.
 - **Finish studio — four swappable PBR packs.** The whole texture library is
   now palette-parametric and can be swapped live from the left panel:
   *Obsidian Graphite* (smoked graphite + gunmetal + carbon), *Copperhead*
@@ -166,10 +181,12 @@ exact original buffer is restored.
   pumps *with* the beat rather than jittering with overall loudness.
 - An **AGC** (slow-decaying reference) normalizes quiet and loud tracks.
 - A **punch envelope** (fast + slow followers) emphasizes transients.
-- A damped **mass-spring follower** (stiffness/damping from *Motion smoothing*)
-  turns the target into smooth, continuous excursion with soft limiting at
-  *Max cone excursion* (default 10 mm — a user-defined simulation parameter,
-  **not** a measured Xmax).
+- The **coupled electro-mechanical model** (`physics.ts`) integrates the
+  actual low-passed samples through the 3-state transducer ODEs (RK4, one
+  step per audio sample) — voltage → coil current → Lorentz force → motion —
+  with soft limiting at *Max cone excursion* (default 10 mm — a
+  user-defined simulation parameter, **not** a measured Xmax) from the
+  Duffing-hardened suspension, Bl(x) falloff and quadratic air load.
 - High-frequency content is metered (bass/mid/HF bars + spectrum) but never
   drives excursion, so cymbals don't shake the cone.
 

@@ -39,8 +39,12 @@
 //
 // Calibration: with Bl = 1 (normalized), back-EMF damping = Bl²/Re = 1/Re.
 // We set Re = 1/(EM_SHARE·2ζωn) so the total damping ratio at rest equals
-// the v2 feel, and derive the voltage gain so a full-scale sine AT resonance
-// produces ≈ 1.25 × Xmax of excursion (the same headroom convention v2 used).
+// the v2 feel. The drive gain is GAIN_K·Xmax·ωe (ωe = boxed resonance): the
+// constant was solved numerically against the FULL nonlinear model (Bl(x)
+// falloff + Duffing stiffening + quadratic aero + Le droop) so a full-scale
+// (±1.4) sine at the boxed resonance produces ≈ 1.25 × Xmax of peak
+// excursion — verified self-similar across the whole slider ranges
+// (Xmax 2–30 mm, boxLoad 0–1, ζ 0.30–0.85 all land within 120–127 %).
 //
 // Integration: RK4, one step per AUDIO SAMPLE (h ≈ 20.8 µs @ 48 kHz). The
 // electrical time constant τ = Le0/Re resolves in ~6 sub-steps, the mechanical
@@ -56,8 +60,15 @@ const BL_ROLL_OFF = 0.42;      // force-factor falloff depth at extreme x
 const BL_SPAN = 1.7;           // falloff span (× Xmax)
 const LE_DROOP = 0.35;         // inductance droop depth at extreme x
 const SPRING_ASYMMETRY = 0.16; // outward-stiffer asymmetry (× x/Xmax)
-const AERO_COEFF = 0.05;       // quadratic air-load coefficient
+const AERO_COEFF = 0.08;       // quadratic drag at Xmax peak velocity, as a
+                               // FRACTION of the spring force at Xmax (~8 %,
+                               // like real radiation loading). Negligible in the
+                               // linear region, progressive at the extremes.
 const BOX_K = 0.9;             // sealed-box stiffness gain at boxLoad = 1
+// Drive-gain constant: gain = GAIN_K · Xmax · ωe. Solved numerically against
+// this exact RK4 model (tests/physics_validate.py) so the calibrated
+// excursion contract above holds with all nonlinearities active.
+const GAIN_K = 2.3637;
 
 export interface StepOpts {
   voltageGain: number; // drive voltage (normalized) per unit of AGC audio
@@ -68,12 +79,15 @@ export interface StepOpts {
   coneMass?: number;   // normalized moving mass 0.6..1.8 (default 1)
 }
 
-/** Voltage gain that makes a full-scale sine at resonance produce ≈
- *  1.25 × Xmax of excursion (matches the v2 headroom convention).
- *  Derivation: x_res ≈ V·(cEm/cTotal)/ωn = V·EM_SHARE/ωn for Bl = 1. */
-export function calibratedVoltageGain(maxUnits: number, resonanceHz: number): number {
+/** Voltage gain that makes a full-scale (±1.4) sine at the BOXED resonance
+ *  produce ≈ 1.25 × Xmax of peak excursion (v2 headroom convention, now
+ *  honored by the nonlinear model — see GAIN_K above). Compensating for the
+ *  box air spring keeps the excursion contract true for every enclosure
+ *  setting: ωe = ωn·√(1 + BOX_K·boxLoad). */
+export function calibratedVoltageGain(maxUnits: number, resonanceHz: number, boxLoad = 0): number {
   const wn = TWO_PI * Math.max(5, resonanceHz);
-  return 1.25 * maxUnits * wn / EM_SHARE;
+  const we = wn * Math.sqrt(1 + BOX_K * Math.max(0, boxLoad));
+  return GAIN_K * maxUnits * we;
 }
 
 export class ExcursionPhysics {
@@ -131,7 +145,14 @@ export class ExcursionPhysics {
     const re = 1 / Math.max(1e-9, cEm);         // DC resistance
     const le0 = LE_TAU * re;                    // τ = Le0/Re
     const cMech = cTotal - cEm;                 // spider/surround losses
-    const cAero = AERO_COEFF * wn2 * maxUnits;  // scales with the suspension
+    // Quadratic air load, normalized to the driver's own operating point:
+    // vChar is the peak cone velocity at Xmax on the boxed resonance, and the
+    // drag at that velocity equals AERO_COEFF of the spring force at Xmax.
+    // (The previous formulation divided by maxUnits a second time, making the
+    // drag ~166× too strong and squashing excursion to ~1 mm.)
+    const ke = wn2 * (1 + BOX_K * boxLoad);     // boxed base stiffness
+    const vChar = Math.sqrt(ke) * maxUnits;     // peak velocity at Xmax
+    const cAero = AERO_COEFF * ke * maxUnits;
 
     let n: number;
     let h: number;
@@ -167,7 +188,8 @@ export class ExcursionPhysics {
       // mechanical: m·a = Bl(x)·i − k(x)·x − cMech·v − cAero·v·|v|
       const bl = ExcursionPhysics.blFall(xx, maxUnits);
       const k = ExcursionPhysics.stiff(xx, wn2, maxUnits, boxLoad);
-      const aero = cAero * vv * Math.abs(vv) / Math.max(1e-9, maxUnits);
+      const vr = vv / vChar;
+      const aero = cAero * vr * Math.abs(vr);
       out[2] = (bl * ii - k * xx - cMech * vv - aero) / mass;
       out[1] = vv;
     };
@@ -189,8 +211,13 @@ export class ExcursionPhysics {
       }
 
       // numeric safety: the nonlinear terms can push energy in on absurd
-      // slider settings; a hard velocity clamp keeps the sim sane.
-      const vMax = 40 * maxUnits;
+      // slider settings; a hard velocity clamp keeps the sim sane. It MUST be
+      // frequency-aware: a cone traveling ±Xmax at resonance moves at
+      // ω·Xmax peak velocity (~2.3 m/s at the defaults). The old fixed
+      // 40·maxUnits = 0.4 m/s clamp silently capped every sine below
+      // vMax/ω ≈ 1–1.8 mm — the "sub only moves 1 mm" bug. 3.5× headroom
+      // over the Xmax-at-resonance velocity keeps it a pure safety net.
+      const vMax = 3.5 * wn * maxUnits;
       if (y0[2] > vMax) y0[2] = vMax; else if (y0[2] < -vMax) y0[2] = -vMax;
       if (!isFinite(y0[1])) { y0[1] = 0; y0[2] = 0; y0[0] = 0; }
     }

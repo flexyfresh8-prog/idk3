@@ -248,7 +248,7 @@ async function boot(): Promise<void> {
     // step per audio sample. Voltage is calibrated so a full-scale
     // (AGC-normalized) note at resonance produces ≈ maxExcursion of travel.
     const maxUnits = params.maxExcursionMM * MM;
-    const vGain = calibratedVoltageGain(maxUnits, params.resonanceHz)
+    const vGain = calibratedVoltageGain(maxUnits, params.resonanceHz, params.boxLoad)
       * params.bassSensitivity * params.animationIntensity;
     const d = debugD !== null ? debugD : physics.stepAudio(frame.driveSamples, frame.driveSampleRate, dt, {
       voltageGain: vGain,

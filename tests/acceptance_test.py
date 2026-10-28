@@ -130,6 +130,15 @@ def run():
         check("Test tone produces bass energy at analyser", max(bass_vals) > 0.02, f"max bass={round(max(bass_vals),3)}")
         check("Bass drives signed cone displacement", max(drive_vals) > 0.05 and max(disp_vals) > 0.3,
               f"max |drive|={round(max(drive_vals),3)} max |excursion|={round(max(disp_vals),2)}mm")
+        # REGRESSION GUARD (excursion calibration): the velocity clamp used to
+        # be frequency-blind (40*maxUnits = 0.4 m/s), which capped every sine
+        # at vMax/ω ≈ 1-1.8 mm and the whole sim at "0-1 mm xmax". With the
+        # fixed physics the AGC-normalized test tone must drive the cone to a
+        # realistic fraction of the default 10 mm Xmax: ≈5.5 mm peak modeled.
+        # Floor 3 mm = the cone visibly travels; ceiling 20 mm = no runaway.
+        check("Excursion reaches realistic Xmax fraction (no 1mm clamp bug)",
+              3.0 < max(disp_vals) < 20.0,
+              f"max |excursion|={round(max(disp_vals),2)}mm (default Xmax=10mm)")
         page.evaluate("window.__sim.stopTestTone()")
 
         # 11. driver-only mode

@@ -40,6 +40,10 @@
         <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M3 4v5h5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="btn-txt">Sim</span>
       </button>
+      <button id="focus-mode" class="btn ghost" title="Focus mode — hide all UI, keep only import & play (Esc exits)" aria-pressed="false">
+        <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        <span class="btn-txt">Focus</span>
+      </button>
       <button id="toggle-left" class="btn ghost only-mobile" aria-expanded="false">Parts</button>
       <button id="toggle-right" class="btn ghost only-mobile" aria-expanded="false">Setup</button>
     </div>
@@ -96,6 +100,18 @@
       </div>
     </aside>
   </main>
+
+  <!-- Focus (no-UI) mode: a minimal floating pill. The real #import-btn and
+       #play-btn nodes are MOVED into #noui-slot by main.ts, so all their
+       wiring (file dialog, play state icon sync) keeps working unchanged. -->
+  <div id="noui-bar" aria-label="Mini player">
+    <div class="noui-pill">
+      <span id="noui-slot" class="noui-slot"></span>
+      <button id="noui-exit" class="btn ghost icon" title="Exit focus mode (Esc)" aria-label="Exit focus mode">
+        <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
 
   <footer id="transport">
     <div class="transport-row">

@@ -91,7 +91,6 @@ export interface SimParams {
   bassSensitivity: number;     // drive multiplier for the bass band
   lfCutoffHz: number;          // lowpass cutoff for the displacement drive signal
   hfCutoffHz: number;          // upper bound of the "bass" analysis band (metering)
-  smoothing: number;           // motion damping 0..1
   surroundFlexibility: number; // 0..1 shape of the deformation field
   surroundStrength: number;    // 0..1 bulge/bend richness of the surround
   coilFollow: number;          // 0.8..1.2 voice-coil travel relative to cone (1 = glued)
@@ -99,15 +98,18 @@ export interface SimParams {
   animationIntensity: number;  // 0..3 master visual scale
 }
 
+// Defaults chosen for PHYSICAL REALISM: Butterworth sealed alignment via the
+// fixed damping ratio (physics.ts REALISTIC_ZETA), a standard 80 Hz sub
+// crossover on the drive tap, Fs = 32 Hz, Xmax = 10 mm (typical 12" driver),
+// and no visual exaggeration (animationIntensity 1.0 = the calibrated scale).
 export const DEFAULT_PARAMS: SimParams = {
   maxExcursionMM: 10,
   resonanceHz: 32,
   coneMass: 1.0,
   boxLoad: 0.35,
   bassSensitivity: 1.0,
-  lfCutoffHz: 120,
+  lfCutoffHz: 80,
   hfCutoffHz: 200,
-  smoothing: 0.55,
   surroundFlexibility: 0.6,
   surroundStrength: 0.8,
   coilFollow: 1.0,
@@ -139,8 +141,6 @@ export const PARAM_META: ParamMeta[] = [
     hint: 'Audio above this frequency barely moves the cone (24 dB/oct low-pass on the drive tap).' },
   { key: 'hfCutoffHz', label: 'Bass band upper limit', min: 80, max: 400, step: 5, unit: 'Hz', kind: 'sim',
     hint: 'Upper bound of the "bass" band used for metering and sensitivity. ≥ drive cutoff.' },
-  { key: 'smoothing', label: 'Motion smoothing', min: 0, max: 1, step: 0.01, unit: '', kind: 'sim',
-    hint: 'Damping of the mass-spring cone model. Higher = slower, heavier cone.' },
   { key: 'surroundFlexibility', label: 'Surround flexibility', min: 0, max: 1, step: 0.01, unit: '', kind: 'sim',
     hint: 'How gradually the rubber roll shares motion between cone edge and frame.' },
   { key: 'surroundStrength', label: 'Surround deformation', min: 0, max: 1, step: 0.01, unit: '', kind: 'sim',

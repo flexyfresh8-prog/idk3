@@ -19,6 +19,16 @@ export class Stage {
 
   readonly lite: boolean;
 
+  // ---------------- adaptive performance (dynamic resolution + idle skip)
+  private maxPixelRatio: number;                 // ceiling from the display
+  private renderScale = 1;                       // DRS multiplier 0.55..1
+  private frameCost = 16;                        // EMA of GPU+CPU frame time (ms)
+  private drsCooldown = 0;                       // seconds until next DRS step
+  private idleTime = 0;                          // seconds without camera input
+  private skipCounter = 0;
+  private skippedRenders = 0;
+  private drawnFrames = 0;
+
   constructor(container: HTMLElement, modelCenter: THREE.Vector3, modelRadius: number) {
     // Lite mode: software rasterizers (SwiftShader headless), automation and
     // weak iGPUs get a cheaper pipeline (no shadows/PMREM, pixelRatio 1).
@@ -30,7 +40,8 @@ export class Stage {
     this.lite = lite;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: !lite, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(lite ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.maxPixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(lite ? 1 : this.maxPixelRatio);
     this.renderer.shadowMap.enabled = !lite;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -124,6 +135,13 @@ export class Stage {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+
+    // any camera interaction wakes the renderer out of its idle throttle
+    const wake = () => { this.idleTime = 0; };
+    this.renderer.domElement.addEventListener('pointerdown', wake);
+    this.renderer.domElement.addEventListener('wheel', wake, { passive: true });
+    this.renderer.domElement.addEventListener('touchstart', wake, { passive: true });
+    this.controls.addEventListener('start', wake);
   }
 
   /** Giant inverted sphere with a vertical gradient — the studio cyclorama. */
@@ -176,15 +194,62 @@ export class Stage {
     };
   }
 
-  tick(dt: number): void {
+  tick(dt: number, motionActive = true): void {
     if (this.camAnim) {
       this.camAnim.t = Math.min(1, this.camAnim.t + dt * 2.2);
       const e = 1 - Math.pow(1 - this.camAnim.t, 3);
       this.camera.position.lerpVectors(this.camAnim.from, this.camAnim.to, e);
       this.controls.target.lerpVectors(this.camAnim.tFrom, this.camAnim.tTo, e);
       if (this.camAnim.t >= 1) this.camAnim = null;
+      this.idleTime = 0;
     }
     this.controls.update();
+    this.idleTime += dt;
+
+    // ---- adaptive resolution: keep the GPU inside its frame budget.
+    // If the smoothed frame cost exceeds ~19 ms (< 52 fps) step the render
+    // scale down; below ~12 ms with headroom, step back up. Steps are small
+    // and rate-limited so the picture never visibly pulses.
+    if (dt > 0 && dt < 0.5) {
+      this.frameCost += (dt * 1000 - this.frameCost) * 0.08;
+      this.drsCooldown -= dt;
+      if (this.drsCooldown <= 0 && !this.lite) {
+        if (this.frameCost > 19 && this.renderScale > 0.55) {
+          this.renderScale = Math.max(0.55, this.renderScale - 0.1);
+          this.applyRenderScale();
+          this.drsCooldown = 0.8;
+        } else if (this.frameCost < 12 && this.renderScale < 1) {
+          this.renderScale = Math.min(1, this.renderScale + 0.05);
+          this.applyRenderScale();
+          this.drsCooldown = 1.2;
+        }
+      }
+    }
+
+    // ---- idle throttle: when nothing moves (no audio, cone at rest, camera
+    // untouched for 0.6 s) render every 3rd frame — the picture is static,
+    // so this is a pure GPU/battery win with zero visual cost.
+    if (!motionActive && this.idleTime > 0.6 && !this.camAnim) {
+      this.skipCounter = (this.skipCounter + 1) % 3;
+      if (this.skipCounter !== 0) { this.skippedRenders++; return; }
+    }
+
     this.renderer.render(this.scene, this.camera);
+    this.drawnFrames++;
+  }
+
+  private applyRenderScale(): void {
+    this.renderer.setPixelRatio(this.lite ? 1 : this.maxPixelRatio * this.renderScale);
+  }
+
+  /** Live performance telemetry (also surfaced via __sim.perf() for tests). */
+  perfInfo(): { renderScale: number; frameCostMs: number; pixelRatio: number; skippedRenders: number; drawnFrames: number } {
+    return {
+      renderScale: +this.renderScale.toFixed(2),
+      frameCostMs: +this.frameCost.toFixed(1),
+      pixelRatio: +this.renderer.getPixelRatio().toFixed(2),
+      skippedRenders: this.skippedRenders,
+      drawnFrames: this.drawnFrames
+    };
   }
 }

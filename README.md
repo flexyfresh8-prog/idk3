@@ -106,12 +106,26 @@ No uploads, no backend, no accounts: your audio files never leave your device.
   read its verified identity (vertex/triangle counts, radial extents), reset
   its transform.
 - **Full parameter panel** — max excursion, bass sensitivity, drive low-pass
-  cutoff, bass-band upper limit, motion smoothing, surround flexibility,
-  surround deformation strength, voice-coil travel, audio gain, animation
-  intensity. Every change applies live; simulation reset included.
+  cutoff, bass-band upper limit, surround flexibility, surround deformation
+  strength, voice-coil travel, audio gain, animation intensity. Every change
+  applies live; simulation reset included. (Motion smoothing was removed —
+  damping is pinned to the physically correct Butterworth sealed alignment,
+  Qtc = 0.707, instead of being a taste slider.)
 - **Local music player** — file picker, drag & drop, play/pause/restart/seek,
   volume + mute, live spectrum analyzer, bass/mid/HF meters, excursion readout,
   synthesized bass test tone. MP3/WAV/M4A/OGG/FLAC.
+- **Focus (no-UI) mode** — the header *Focus* button (or `?noui=1`, or Esc to
+  exit) hides every panel, the header and the transport, leaving only the 3D
+  stage with a floating mini-pill holding exactly two controls: **import
+  song** and **play/pause**. The real transport buttons move into the pill,
+  so all wiring stays identical; drag & drop keeps working; the mode is
+  written back to the URL so a focus view is shareable.
+- **Adaptive performance** — the renderer watches its smoothed frame cost and
+  steps render resolution between 55–100 % (dynamic resolution scaling) to
+  stay inside the frame budget on weak GPUs / HiDPI screens; when nothing
+  moves (no audio, cone at rest, camera idle) it drops to 1-of-3 renders —
+  pure GPU/battery savings with zero visual cost. `window.__sim.perf()`
+  exposes live telemetry.
 - **Responsive** — desktop 3-column studio layout; tablet/phone use
   off-canvas panels and a compact transport. No horizontal overflow from
   360 px up; touch orbit/zoom/pan on the 3D view.
@@ -215,7 +229,8 @@ Then: **Import MP3** (or drag & drop a file anywhere), press play, or hit
   clean look at the surround roll and voice coil motion.
 - Select *Rubber Surround — Part 1* and press solo (◎) to isolate one arc
   segment and watch it flex.
-- If your device struggles, append `?lite=1` to the URL.
+- If your device struggles, append `?lite=1` to the URL (or let the adaptive
+  resolution scaler find a comfortable render scale by itself).
 
 ## Development
 

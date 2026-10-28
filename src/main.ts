@@ -10,7 +10,7 @@ import { DEFAULT_PARAMS, type SimParams } from './core/types';
 import { auditModel, type AuditResult, type AuditedPart } from './core/gltfAudit';
 import { SurroundDeformer } from './core/surroundDeform';
 import { ConeAssembly } from './core/assembly';
-import { ExcursionPhysics, calibratedVoltageGain } from './core/physics';
+import { ExcursionPhysics, calibratedVoltageGain, REALISTIC_ZETA } from './core/physics';
 import { AudioEngine } from './audio/audioEngine';
 import { Stage } from './scene/stage';
 import { MaterialLibrary, FINISHES } from './scene/materials';
@@ -20,7 +20,6 @@ import { PlayerUI } from './ui/playerUI';
 
 const MODEL_URL = `${import.meta.env.BASE_URL}models/tripo_model_1793179198729.glb`;
 const MM = 0.001; // glTF units are meters
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 const params: SimParams = { ...DEFAULT_PARAMS };
 const engine = new AudioEngine();
@@ -187,6 +186,50 @@ async function boot(): Promise<void> {
     });
   }
 
+  // ---------------- focus (no-UI) mode
+  // Only the 3D viewport stays, with a floating pill holding exactly two
+  // controls: import song + play/pause. The REAL #import-btn / #play-btn
+  // nodes are moved into the pill, so every listener (file dialog, drag &
+  // drop, play-state icon sync from PlayerUI) keeps working with zero
+  // duplicated logic. Toggle via the header button, Esc, or ?noui=1 (also
+  // written back to the URL so a focus-mode view is shareable).
+  const importBtnEl = $('import-btn') as HTMLButtonElement;
+  const playBtnEl = $('play-btn') as HTMLButtonElement;
+  const restartBtnEl = $('restart-btn') as HTMLButtonElement;
+  const seekEl = $('seek') as HTMLInputElement;
+  const transportControlsEl = importBtnEl.parentElement!; // .transport-controls
+  const nouiSlot = $('noui-slot');
+
+  function applyNoUi(on: boolean, pushUrl = true, announce = true): void {
+    const wasOn = document.body.classList.contains('noui');
+    if (wasOn === on) return;
+    document.body.classList.toggle('noui', on);
+    ($('focus-mode') as HTMLButtonElement).setAttribute('aria-pressed', String(on));
+    if (on) {
+      nouiSlot.append(importBtnEl, playBtnEl);
+    } else {
+      transportControlsEl.insertBefore(importBtnEl, restartBtnEl);
+      transportControlsEl.insertBefore(playBtnEl, seekEl);
+    }
+    if (pushUrl) {
+      const u = new URL(location.href);
+      if (on) u.searchParams.set('noui', '1'); else u.searchParams.delete('noui');
+      history.replaceState(null, '', u);
+    }
+    if (announce) {
+      toast(on ? 'Focus mode — import & play only. Esc or the corner button exits.'
+               : 'Full lab UI restored.', 'info');
+    }
+  }
+  $('focus-mode').addEventListener('click', () => applyNoUi(!document.body.classList.contains('noui')));
+  $('noui-exit').addEventListener('click', () => applyNoUi(false));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.classList.contains('noui')) applyNoUi(false);
+  });
+  if (new URLSearchParams(location.search).has('noui')) {
+    applyNoUi(true, /* pushUrl */ false, /* announce */ false);
+  }
+
   groupChecks.enclosure.addEventListener('change', applyVisibility);
   groupChecks.frame.addEventListener('change', applyVisibility);
   groupChecks.motor.addEventListener('change', applyVisibility);
@@ -252,7 +295,7 @@ async function boot(): Promise<void> {
       * params.bassSensitivity * params.animationIntensity;
     const d = debugD !== null ? debugD : physics.stepAudio(frame.driveSamples, frame.driveSampleRate, dt, {
       voltageGain: vGain,
-      zeta: 0.30 + 0.55 * clamp01(params.smoothing),
+      zeta: REALISTIC_ZETA,
       maxUnits,
       resonanceHz: params.resonanceHz,
       boxLoad: params.boxLoad,
@@ -275,15 +318,23 @@ async function boot(): Promise<void> {
     lastFrame.peak = frame.peak;
     lastFrame.playing = frame.playing || engine.testToneActive;
 
+    // Performance: the renderer drops into a low-power cadence when nothing
+    // moves (no audio, cone at rest, camera idle) — see Stage.tick.
+    const motionActive = frame.playing || engine.testToneActive
+      || Math.abs(physics.velocity) > 1e-4 || debugD !== null;
+
     uiAccum += dt;
     if (uiAccum > 1 / 30) {
       uiAccum = 0;
-      player.frame();
-      player.setLevels(frame.bass, frame.mid, frame.high, assembly.currentD);
-      player.drawSpectrum(lastFrame.playing ? frame.spectrum : null, engine.sampleRate);
+      if (!document.body.classList.contains('noui')) {
+        // focus mode hides these DOM meters — skip the canvas + style work
+        player.frame();
+        player.setLevels(frame.bass, frame.mid, frame.high, assembly.currentD);
+        player.drawSpectrum(lastFrame.playing ? frame.spectrum : null, engine.sampleRate);
+      }
     }
 
-    if (!stillMode) stage.tick(dt);
+    if (!stillMode) stage.tick(dt, motionActive);
   }
   function loop(now: number): void {
     requestAnimationFrame(loop);
@@ -321,6 +372,11 @@ async function boot(): Promise<void> {
     clearForcedDisplacement: () => { debugD = null; },
     isForced: () => debugD !== null,
     stageLite: () => stage.lite,
+    /** Adaptive-performance telemetry (dynamic resolution + idle skipping). */
+    perf: () => stage.perfInfo(),
+    /** Focus (no-UI) mode controls for tests/automation. */
+    setNoUi: (on: boolean) => applyNoUi(on),
+    isNoUi: () => document.body.classList.contains('noui'),
     /** Numerical acceptance probe: world Z of the moving parts + local axial
      *  extent of the three deformed surround meshes (rest z span ≈ fixed). */
     probe: () => {

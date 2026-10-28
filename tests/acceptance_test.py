@@ -154,6 +154,58 @@ def run():
         vis2 = {m["index"]: m["visible"] for m in page.evaluate("window.__sim.mapping()")}
         check("Per-part visibility functional", all(vis2[i] for i in (21, 19, 15, 4, 1)), "all core parts visible in full mode")
 
+        # 12b. motion smoothing removed — damping pinned to realistic constant
+        params_obj = page.evaluate("window.__sim.params")
+        smoothing_ui = page.evaluate("!!document.getElementById('param-smoothing')")
+        check("Motion smoothing option removed (fixed realistic damping)",
+              "smoothing" not in params_obj and not smoothing_ui,
+              f"param key present={'smoothing' in params_obj}, slider in DOM={smoothing_ui}")
+
+        # 12c. adaptive performance telemetry
+        perf = page.evaluate("window.__sim.perf()")
+        ok = (0.5 <= perf["renderScale"] <= 1.0 and perf["frameCostMs"] > 0
+              and perf["drawnFrames"] > 0)
+        check("Adaptive performance system live (DRS + idle skip)",
+              ok, json.dumps(perf))
+
+        # 12d. focus (no-UI) mode: viewport + import/play pill only
+        page2 = browser.new_page(viewport={"width": 1000, "height": 700})
+        page2.on("pageerror", lambda e: errors.append("noui:" + str(e)))
+        page2.goto(APP.replace("?", "?noui=1&"), wait_until="domcontentloaded", timeout=60000)
+        page2.wait_for_function("typeof window.__sim === 'object'", timeout=120000)
+        hidden_ok = page2.evaluate("""() => {
+          const ids = ['topbar', 'left-panel', 'right-panel', 'transport'];
+          return ids.every((id) => getComputedStyle(document.getElementById(id)).display === 'none');
+        }""")
+        pill_ok = page2.evaluate("""() => {
+          const bar = document.getElementById('noui-bar');
+          const shown = getComputedStyle(bar).display !== 'none';
+          const play = document.getElementById('play-btn');
+          const imp = document.getElementById('import-btn');
+          const cols = getComputedStyle(document.getElementById('layout')).gridTemplateColumns.split(' ').length;
+          return shown && !!play.closest('#noui-bar') && !!imp.closest('#noui-bar') && cols === 1;
+        }""")
+        check("No-UI mode: chrome hidden, import+play pill shown, single-column layout",
+              hidden_ok and pill_ok, f"hidden={hidden_ok} pill={pill_ok}")
+        page2.evaluate("window.__sim.clearForcedDisplacement && window.__sim.clearForcedDisplacement()")
+        page2.evaluate("""async () => {
+          const r = await fetch('/idk3/test_bass.mp3'); if (!r.ok) throw new Error('http ' + r.status);
+          const b = await r.blob();
+          await window.__sim.loadFile(new File([b], 'test_bass.mp3', {type: 'audio/mpeg'}));
+        }""")
+        page2.wait_for_function("!window.__sim.engine.paused", timeout=30000)
+        check("No-UI mode: import + auto-play works from the pill", True, "file loaded via pill, playback started")
+        page2.keyboard.press("Escape")
+        restored = page2.evaluate("""() => {
+          const play = document.getElementById('play-btn');
+          const imp = document.getElementById('import-btn');
+          const topbarVisible = getComputedStyle(document.getElementById('topbar')).display !== 'none';
+          const inTransport = !!play.closest('#transport') && !!imp.closest('#transport');
+          return topbarVisible && inTransport && !document.body.classList.contains('noui');
+        }""")
+        check("No-UI mode: Esc restores the full lab UI", restored, f"restored={restored}")
+        page2.close()
+
         # 13-15. viewport / touch sizing sanity + no page errors
         check("No runtime page errors", len(errors) == 0, "; ".join(errors[:3]) if errors else "clean")
         page.screenshot(path="/home/z/my-project/work/acceptance_full.png")

@@ -3,13 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0d10" />
-  <meta name="description" content="idk3 — interactive audio-reactive subwoofer simulator. Import an MP3, watch the cone, rubber surround and voice coil move in real time. Runs 100% in your browser." />
+  <meta name="theme-color" content="#07090d" />
+  <meta name="description" content="idk3 — interactive audio-reactive subwoofer simulator. Import an MP3, watch the cone, rubber surround and voice coil move in real time with RK4 electro-mechanical physics. Runs 100% in your browser." />
   <title>idk3 · Subwoofer Simulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
 </head>
 <body>
   <header id="topbar">
     <div class="brand">
+      <svg class="brand-wave" viewBox="0 0 28 20" aria-hidden="true">
+        <path d="M1 10 H5 M8 4 V16 M12 1 V19 M16 6 V14 M20 3 V17 M24 8 V12 M27 10 H28"
+              stroke="url(#wg)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+        <defs>
+          <linearGradient id="wg" x1="0" y1="0" x2="28" y2="0" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/>
+          </linearGradient>
+        </defs>
+      </svg>
       <span class="brand-mark">idk3</span>
       <span class="brand-sub">subwoofer simulator</span>
     </div>
@@ -20,8 +32,14 @@
     </div>
 
     <div class="top-actions">
-      <button id="reset-cam" class="btn ghost" title="Reset camera" aria-label="Reset camera">⟲ <span class="btn-txt">Camera</span></button>
-      <button id="top-reset-sim" class="btn ghost" title="Reset simulation" aria-label="Reset simulation">⟳ <span class="btn-txt">Sim</span></button>
+      <button id="reset-cam" class="btn ghost" title="Reset camera" aria-label="Reset camera">
+        <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
+        <span class="btn-txt">Camera</span>
+      </button>
+      <button id="top-reset-sim" class="btn ghost" title="Reset simulation" aria-label="Reset simulation">
+        <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M3 4v5h5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="btn-txt">Sim</span>
+      </button>
       <button id="toggle-left" class="btn ghost only-mobile" aria-expanded="false">Parts</button>
       <button id="toggle-right" class="btn ghost only-mobile" aria-expanded="false">Setup</button>
     </div>
@@ -42,7 +60,7 @@
           <label class="check-row"><input type="checkbox" id="vis-enclosure" checked> Enclosure drum</label>
           <label class="check-row"><input type="checkbox" id="vis-frame" checked> Frame · basket · motor</label>
           <label class="check-row"><input type="checkbox" id="vis-internals" checked> Show coil &amp; internals in driver view</label>
-          <label class="check-row"><input type="checkbox" id="vis-fiber" checked> Coil composite-fiber detail</label>
+          <label class="check-row"><input type="checkbox" id="vis-fiber" checked> Coil carbon-fiber weave</label>
           <label class="check-row"><input type="checkbox" id="vis-studio" checked> Studio materials <span class="muted">(off = original flat gray)</span></label>
         </div>
       </div>
@@ -50,11 +68,14 @@
 
     <section id="viewport" aria-label="3D viewport">
       <div id="loading" class="overlay show">
-        <div class="loader-ring"></div>
+        <div class="loader-ring"><i></i></div>
         <p id="loading-text">Loading subwoofer model…</p>
       </div>
       <div id="drop-overlay" class="overlay drop">
-        <div class="drop-box">⤓ Drop your MP3 to load it</div>
+        <div class="drop-box">
+          <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+          Drop your MP3 to load it
+        </div>
       </div>
       <div id="toasts" aria-live="polite"></div>
     </section>
@@ -79,16 +100,24 @@
         <span id="file-chip" class="file-chip">No file loaded — import an MP3</span>
       </div>
       <div class="transport-controls">
-        <button id="import-btn" class="btn accent" title="Import audio file">⤒ Import MP3</button>
-        <button id="restart-btn" class="btn icon" title="Restart">⟲</button>
-        <button id="play-btn" class="btn icon big" title="Play / pause">▶</button>
+        <button id="import-btn" class="btn accent" title="Import audio file">
+          <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M12 17V5m0 0 4 4m-4-4-4 4" stroke="currentColor" stroke-width="2.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2.1" fill="none" stroke-linecap="round"/></svg>
+          <span class="btn-txt">Import MP3</span>
+        </button>
+        <button id="restart-btn" class="btn icon" title="Restart" aria-label="Restart">
+          <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M19 5v14M15 5.5v13a1 1 0 0 1-1.6.8L5.9 13a1.2 1.2 0 0 1 0-2l7.5-6.3a1 1 0 0 1 1.6.8Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="play-btn" class="btn icon big" title="Play / pause" aria-label="Play"></button>
         <input id="seek" class="seek" type="range" min="0" max="100" step="0.05" value="0" aria-label="Seek" />
         <span id="time" class="time">0:00 / 0:00</span>
         <div class="vol">
-          <button id="mute-btn" class="btn icon" title="Mute">🔊</button>
+          <button id="mute-btn" class="btn icon" title="Mute" aria-label="Mute"></button>
           <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
         </div>
-        <button id="test-btn" class="btn ghost" title="Play a synthesized 45/62 Hz bass tone">▶ Bass test tone</button>
+        <button id="test-btn" class="btn ghost" title="Play a synthesized 45/62 Hz bass tone">
+          <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M2 12h2l2-6 3 12 3-9 2 5 2-3h6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="btn-txt">Bass test tone</span>
+        </button>
       </div>
     </div>
     <div class="transport-row meters">

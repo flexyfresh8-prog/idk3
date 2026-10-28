@@ -13,6 +13,31 @@ No uploads, no backend, no accounts: your audio files never leave your device.
 
 ---
 
+## v2 rework — physics, textures, UI
+
+- **Electro-mechanical physics (RK4, per-sample).** The moving assembly is now a
+  3-state system — coil force (with Le/Re current lag), displacement, velocity —
+  integrated with a Runge–Kutta 4 step for every audio sample. Includes
+  back-EMF electromagnetic braking (resonance-peak compression), a nonlinear
+  force factor Bl(x) that softens as the coil leaves the gap, an asymmetric
+  Duffing hardening spring past Xmax, and a quadratic air-load term.
+  A new **Driver resonance Fs** slider (18–60 Hz) sets the mass-spring
+  resonance of the simulated system.
+- **Procedural PBR texture library.** Every component class gets generated
+  albedo + normal (Sobel height→normal) + roughness maps: pressed
+  aramid/paper weave cone with clearcoat, matte micro-grain rubber surround
+  with sheen, 2×2 twill carbon-fiber coil, brushed gunmetal flange/basket,
+  machined motor steel, black loudspeaker carpet on the enclosure, and an
+  orange-peel glossy dust cap. Materials upgraded to MeshPhysicalMaterial.
+- **Studio stage.** Gradient cyclorama backdrop, platform + polar grid,
+  depth fog, and cyan/violet rim lighting matched to the UI theme.
+- **New UI.** "Precision audio lab" design: obsidian glass panels, cyan→violet
+  accent system, Space Grotesk / Inter / JetBrains Mono typography, inline
+  SVG transport icons, gradient-filled sliders, and a spectrum analyzer with
+  falling peak-hold caps.
+
+---
+
 ## Features
 
 - **Real model, real parts** — the simulator loads `public/models/tripo_model_1793179198729.glb`

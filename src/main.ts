@@ -219,18 +219,20 @@ async function boot(): Promise<void> {
 
     const frame = engine.frame(dt, params.hfCutoffHz);
 
-    // TRUE dot-to-dot physics: the cone is a mass-spring-damper system driven
-    // by the actual bass waveform samples, integrated one step per audio
-    // sample. Force is calibrated so a full-scale (AGC-normalized) note at
-    // resonance produces ≈ maxExcursion of peak travel.
+    // TRUE dot-to-dot physics: the cone is a full electro-mechanical system
+    // (coil-force lag + back-EMF braking + nonlinear Bl(x) + Duffing spring)
+    // driven by the actual bass waveform samples, integrated with RK4 one
+    // step per audio sample. Force is calibrated so a full-scale
+    // (AGC-normalized) note at resonance produces ≈ maxExcursion of travel.
     const maxUnits = params.maxExcursionMM * MM;
-    const wn = 2 * Math.PI * 32;                 // driver resonance Fs = 32 Hz
+    const wn = 2 * Math.PI * params.resonanceHz; // driver resonance Fs
     const forceGain = wn * wn * maxUnits * 1.25
       * params.bassSensitivity * params.animationIntensity;
     const d = debugD !== null ? debugD : physics.stepAudio(frame.driveSamples, frame.driveSampleRate, dt, {
       forceGain,
       zeta: 0.30 + 0.55 * clamp01(params.smoothing),
-      maxUnits
+      maxUnits,
+      resonanceHz: params.resonanceHz
     });
 
     // Both the moving assembly and the surround field use the same signed
@@ -273,7 +275,7 @@ async function boot(): Promise<void> {
 
   // ------------------------------------------------------------------ test hook (used by automated browser tests)
   (window as any).__sim = {
-    version: '1.0.0',
+    version: '2.0.0',
     mapping: () => audit.parts.map((p) => ({
       index: p.index, name: p.nodeName, label: p.spec.label, role: p.spec.role,
       group: p.spec.group, verts: p.verts, tris: p.tris,

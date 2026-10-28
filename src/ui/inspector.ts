@@ -76,7 +76,7 @@ export class Inspector {
     const solo = document.createElement('span');
     solo.className = 'comp-solo';
     solo.title = 'Isolated inspection';
-    solo.textContent = '◎';
+    solo.innerHTML = '<svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7" fill="none"/></svg>';
     solo.addEventListener('click', (e) => {
       e.stopPropagation();
       this.toggleSolo(p);
@@ -155,9 +155,9 @@ export class Inspector {
         part.mesh.material = mat;
         this.highlightMats.set(part.index, mat);
       }
-      const k = 0.18 + 0.14 * Math.sin(this.pulse);
+      const k = 0.16 + 0.13 * Math.sin(this.pulse);
       if (mat.emissive) {
-        mat.emissive.setRGB(k, k * 0.62, k * 0.18);
+        mat.emissive.setRGB(k * 0.3, k * 0.82, k);   // cyan pulse, matches UI
       }
     }
   }

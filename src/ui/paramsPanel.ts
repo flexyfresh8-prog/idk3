@@ -2,6 +2,7 @@
 // change instantly to the running simulation (no page reload), validates
 // ranges and cross-field constraints (hfCutoff >= lfCutoff + 40 Hz).
 import { PARAM_META, DEFAULT_PARAMS, type SimParams, type ParamMeta } from '../core/types';
+import { paintRange } from './paintRange';
 
 export class ParamsPanel {
   private inputs = new Map<keyof SimParams, HTMLInputElement>();
@@ -68,6 +69,7 @@ export class ParamsPanel {
 
     this.inputs.set(meta.key, input);
     this.bubbles.set(meta.key, bubble);
+    paintRange(input);
     input.addEventListener('input', () => {
       let v = parseFloat(input.value);
       if (isNaN(v)) return;
@@ -93,6 +95,7 @@ export class ParamsPanel {
     for (const meta of PARAM_META) {
       const input = this.inputs.get(meta.key)!;
       input.value = String(this.params[meta.key]);
+      paintRange(input);
       this.syncBubble(meta.key);
     }
   }

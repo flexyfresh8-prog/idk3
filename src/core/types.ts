@@ -85,6 +85,7 @@ export { specFor };
 
 export interface SimParams {
   maxExcursionMM: number;      // user-defined simulation parameter (mm of simulated peak excursion)
+  resonanceHz: number;         // driver free-air resonance Fs of the simulated system
   bassSensitivity: number;     // drive multiplier for the bass band
   lfCutoffHz: number;          // lowpass cutoff for the displacement drive signal
   hfCutoffHz: number;          // upper bound of the "bass" analysis band (metering)
@@ -98,6 +99,7 @@ export interface SimParams {
 
 export const DEFAULT_PARAMS: SimParams = {
   maxExcursionMM: 10,
+  resonanceHz: 32,
   bassSensitivity: 1.0,
   lfCutoffHz: 120,
   hfCutoffHz: 200,
@@ -121,6 +123,8 @@ export interface ParamMeta {
 export const PARAM_META: ParamMeta[] = [
   { key: 'maxExcursionMM', label: 'Max cone excursion', min: 1, max: 30, step: 0.5, unit: 'mm', kind: 'sim',
     hint: 'Xmax of the simulated suspension. Beyond it the spring stiffens progressively (real spider behavior).' },
+  { key: 'resonanceHz', label: 'Driver resonance Fs', min: 18, max: 60, step: 1, unit: 'Hz', kind: 'sim',
+    hint: 'Free-air resonance of the simulated driver. Sets where the mass-spring system naturally rings.' },
   { key: 'bassSensitivity', label: 'Bass sensitivity', min: 0.2, max: 4, step: 0.05, unit: '×', kind: 'sim',
     hint: 'How strongly the low-frequency band drives the cone.' },
   { key: 'lfCutoffHz', label: 'Drive low-pass cutoff', min: 40, max: 300, step: 5, unit: 'Hz', kind: 'sim',

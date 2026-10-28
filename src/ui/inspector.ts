@@ -157,7 +157,7 @@ export class Inspector {
       }
       const k = 0.16 + 0.13 * Math.sin(this.pulse);
       if (mat.emissive) {
-        mat.emissive.setRGB(k * 0.3, k * 0.82, k);   // cyan pulse, matches UI
+        mat.emissive.setRGB(k, k * 0.58, k * 0.22);   // amber pulse, matches the v3 dyno UI
       }
     }
   }

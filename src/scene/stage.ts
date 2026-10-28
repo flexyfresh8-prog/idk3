@@ -1,7 +1,7 @@
 // Three.js stage: renderer, camera, orbit controls, lighting, environment,
 // ground shadow, studio backdrop. Keeps the model's original proportions
-// untouched. v2: theme-matched rims (cyan/violet), gradient backdrop dome,
-// display platform + polar grid, depth fog.
+// untouched. v3: dyno-cell theme — warm amber key rim + steel-blue fill,
+// graphite backdrop dome, display platform + polar grid, depth fog.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -39,8 +39,8 @@ export class Stage {
     container.appendChild(this.renderer.domElement);
     this.renderer.domElement.id = 'gl-canvas';
 
-    this.scene.background = new THREE.Color('#07090d');
-    this.scene.fog = new THREE.Fog('#07090d', modelRadius * 5, modelRadius * 14);
+    this.scene.background = new THREE.Color('#0a0b0f');
+    this.scene.fog = new THREE.Fog('#0a0b0f', modelRadius * 5, modelRadius * 14);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.01, 60);
     this.defaultTarget.copy(modelCenter);
@@ -72,7 +72,7 @@ export class Stage {
     }
 
     // key light — warm white, throws the main shadow
-    const key = new THREE.DirectionalLight('#fff2df', 2.7);
+    const key = new THREE.DirectionalLight('#fff3e2', 2.7);
     key.position.set(modelRadius * 1.6, modelRadius * 2.2, modelRadius * -2.4);
     key.castShadow = !lite;
     key.shadow.mapSize.set(1024, 1024);
@@ -85,30 +85,30 @@ export class Stage {
     this.scene.add(key);
     this.keyLight = key;
 
-    // theme rims — cool cyan from behind-left, violet from behind-right
-    const rim = new THREE.DirectionalLight('#4dd8ff', 1.35);
+    // theme rims — amber lamp from behind-left, steel-blue fill from behind-right
+    const rim = new THREE.DirectionalLight('#ffb454', 1.45);
     rim.position.set(modelRadius * -2.2, modelRadius * 1.1, modelRadius * 2.0);
     this.scene.add(rim);
 
-    const rim2 = new THREE.DirectionalLight('#8f7bff', 0.85);
+    const rim2 = new THREE.DirectionalLight('#5f7cff', 0.7);
     rim2.position.set(modelRadius * 2.1, modelRadius * -0.4, modelRadius * 1.8);
     this.scene.add(rim2);
 
-    const amb = new THREE.HemisphereLight('#39414d', '#0c0e12', 0.85);
+    const amb = new THREE.HemisphereLight('#454038', '#0d0d10', 0.85);
     this.scene.add(amb);
 
     // display platform + faint polar grid under the driver
     const groundY = modelCenter.y - modelRadius * 0.92;
     const platform = new THREE.Mesh(
       new THREE.CylinderGeometry(modelRadius * 1.55, modelRadius * 1.7, modelRadius * 0.07, 72),
-      new THREE.MeshStandardMaterial({ color: '#0e1116', roughness: 0.4, metalness: 0.65 })
+      new THREE.MeshStandardMaterial({ color: '#141318', roughness: 0.38, metalness: 0.66 })
     );
     platform.position.set(modelCenter.x, groundY - modelRadius * 0.035, modelCenter.z);
     platform.receiveShadow = !lite;
     this.scene.add(platform);
 
     const grid = new THREE.PolarGridHelper(
-      modelRadius * 2.6, 16, 6, 64, 0x1d2b38, 0x141c26
+      modelRadius * 2.6, 16, 6, 64, 0x33261a, 0x1c1815
     );
     grid.position.set(modelCenter.x, groundY - modelRadius * 0.068, modelCenter.z);
     (grid.material as THREE.Material).transparent = true;
@@ -134,9 +134,9 @@ export class Stage {
       depthWrite: false,
       fog: false,
       uniforms: {
-        top: { value: new THREE.Color('#101823') },
-        mid: { value: new THREE.Color('#0a0e15') },
-        bot: { value: new THREE.Color('#05070a') }
+        top: { value: new THREE.Color('#191410') },
+        mid: { value: new THREE.Color('#100e12') },
+        bot: { value: new THREE.Color('#070708') }
       },
       vertexShader: /* glsl */`
         varying vec3 vPos;

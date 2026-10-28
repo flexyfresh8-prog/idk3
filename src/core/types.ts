@@ -86,6 +86,8 @@ export { specFor };
 export interface SimParams {
   maxExcursionMM: number;      // user-defined simulation parameter (mm of simulated peak excursion)
   resonanceHz: number;         // driver free-air resonance Fs of the simulated system
+  coneMass: number;            // normalized moving mass 0.6..1.8 (transient feel)
+  boxLoad: number;             // sealed-enclosure air-spring load 0..1
   bassSensitivity: number;     // drive multiplier for the bass band
   lfCutoffHz: number;          // lowpass cutoff for the displacement drive signal
   hfCutoffHz: number;          // upper bound of the "bass" analysis band (metering)
@@ -100,6 +102,8 @@ export interface SimParams {
 export const DEFAULT_PARAMS: SimParams = {
   maxExcursionMM: 10,
   resonanceHz: 32,
+  coneMass: 1.0,
+  boxLoad: 0.35,
   bassSensitivity: 1.0,
   lfCutoffHz: 120,
   hfCutoffHz: 200,
@@ -125,6 +129,10 @@ export const PARAM_META: ParamMeta[] = [
     hint: 'Xmax of the simulated suspension. Beyond it the spring stiffens progressively (real spider behavior).' },
   { key: 'resonanceHz', label: 'Driver resonance Fs', min: 18, max: 60, step: 1, unit: 'Hz', kind: 'sim',
     hint: 'Free-air resonance of the simulated driver. Sets where the mass-spring system naturally rings.' },
+  { key: 'coneMass', label: 'Cone moving mass', min: 0.6, max: 1.8, step: 0.02, unit: '×', kind: 'sim',
+    hint: 'Normalized moving mass Mms. Heavier cones attack slower and overshoot deeper at the same damping.' },
+  { key: 'boxLoad', label: 'Enclosure air load', min: 0, max: 1, step: 0.01, unit: '', kind: 'sim',
+    hint: 'Sealed-box air spring behind the cone. Adds compliance stiffness and raises the effective resonance like a real closed box.' },
   { key: 'bassSensitivity', label: 'Bass sensitivity', min: 0.2, max: 4, step: 0.05, unit: '×', kind: 'sim',
     hint: 'How strongly the low-frequency band drives the cone.' },
   { key: 'lfCutoffHz', label: 'Drive low-pass cutoff', min: 40, max: 300, step: 5, unit: 'Hz', kind: 'sim',

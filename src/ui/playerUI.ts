@@ -213,12 +213,12 @@ export class PlayerUI {
       const bh = Math.max(2, v * (h - 4));
       const x = i * bw;
 
-      // bar: cyan → violet → rose across the spectrum
+      // bar: amber → tangerine → ember across the spectrum (v3 dyno theme)
       const t = i / (bars - 1);
-      const hue = 188 + t * 85;      // 188 (cyan) → 273 (violet)
-      const light = 52 + v * 24;
-      ctx.fillStyle = `hsl(${hue} 88% ${light}%)`;
-      ctx.shadowColor = `hsla(${hue}, 90%, 60%, 0.55)`;
+      const hue = 42 - t * 30;       // 42 (amber) → 12 (ember red)
+      const light = 55 + v * 20;
+      ctx.fillStyle = `hsl(${hue} 96% ${light}%)`;
+      ctx.shadowColor = `hsla(${hue}, 96%, 58%, 0.55)`;
       ctx.shadowBlur = 6;
       roundRect(ctx, x + 1.5, h - bh, bw - 3, bh, 2);
       ctx.fill();

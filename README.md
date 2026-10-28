@@ -1,4 +1,4 @@
-# idk3 — Interactive Subwoofer Simulator
+# idk3 — Interactive Subwoofer Dyno Lab
 
 A realistic, audio-reactive 3D subwoofer simulator that runs entirely in your
 browser. Import any MP3 from your device and watch the **actual components of
@@ -13,7 +13,37 @@ No uploads, no backend, no accounts: your audio files never leave your device.
 
 ---
 
-## v2 rework — physics, textures, UI
+## v3 rework — coupled physics, finish studio, dyno-lab UI
+
+- **Fully coupled electro-mechanical physics (RK4, per-sample).** v2 bolted
+  back-EMF braking on as an extra damping term. v3 replaces it with the
+  textbook lumped transducer model: the audio drives a **voltage** across the
+  voice coil, the coil has real dynamics `Le(x)·di/dt = V − Re·i − Bl(x)·v`,
+  force is `Bl(x)·i`, and every cross-domain effect — electromagnetic braking,
+  inductive phase lag, force softening at extreme travel — *emerges* from the
+  coupling. The nonlinear inductance `Le(x)` droops as the coil leaves the
+  gap; the suspension keeps its Duffing hardening and asymmetry; a new
+  **sealed-box air spring** (Enclosure air load slider) adds compliance
+  stiffness like a real closed box; a new **Cone moving mass** slider changes
+  transient attack and overshoot. Same calibration contract as v2: a
+  full-scale note at resonance produces ≈ Xmax of travel.
+- **Finish studio — four swappable PBR packs.** The whole texture library is
+  now palette-parametric and can be swapped live from the left panel:
+  *Obsidian Graphite* (smoked graphite + gunmetal + carbon), *Copperhead*
+  (black ceramic cone + polished copper twill coil + dark bronze), *Arctic
+  Forged* (glazed white-ceramic cone + forged aluminum + silver twill), and
+  *Heritage Paper* (vintage tan paper cone + cream cloth surround + aged
+  brass). Each pack regenerates albedo, Sobel-normal and roughness maps per
+  component class, with per-finish clearcoat/sheen/metalness overrides.
+- **"Dyno lab" UI.** New design language: warm instrument-panel graphite,
+  amber→tangerine signal accents, Sora / Manrope / IBM Plex Mono typography,
+  rack-module panels, fader-style notched sliders, amber spectrum with ember
+  peak caps, VFD-style excursion readout, and finish swatch chips with
+  two-tone previews.
+
+---
+
+## v2 rework — physics, textures, UI (superseded by v3, kept for reference)
 
 - **Electro-mechanical physics (RK4, per-sample).** The moving assembly is now a
   3-state system — coil force (with Le/Re current lag), displacement, velocity —

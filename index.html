@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#07090d" />
-  <meta name="description" content="idk3 — interactive audio-reactive subwoofer simulator. Import an MP3, watch the cone, rubber surround and voice coil move in real time with RK4 electro-mechanical physics. Runs 100% in your browser." />
-  <title>idk3 · Subwoofer Simulator</title>
+  <meta name="theme-color" content="#0a0b0f" />
+  <meta name="description" content="idk3 — interactive audio-reactive subwoofer simulator. Import an MP3, watch the cone, rubber surround and voice coil move in real time with fully coupled electro-mechanical physics. Four swappable PBR finish packs. Runs 100% in your browser." />
+  <title>idk3 · Subwoofer Dyno Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@400;500;600;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
 </head>
 <body>
   <header id="topbar">
@@ -18,12 +18,12 @@
               stroke="url(#wg)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
         <defs>
           <linearGradient id="wg" x1="0" y1="0" x2="28" y2="0" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/>
+            <stop stop-color="#ffcf6e"/><stop offset="1" stop-color="#ff5c3a"/>
           </linearGradient>
         </defs>
       </svg>
       <span class="brand-mark">idk3</span>
-      <span class="brand-sub">subwoofer simulator</span>
+      <span class="brand-sub">subwoofer dyno lab</span>
     </div>
 
     <div class="mode-switch" role="tablist" aria-label="View mode">
@@ -56,12 +56,15 @@
           <ul id="verify-list"></ul>
         </div>
         <div class="panel-block">
+          <h3 class="insp-group-title">Finish studio <span class="panel-sub">live PBR packs</span></h3>
+          <div id="finish-list" class="finish-list"></div>
+          <label class="check-row"><input type="checkbox" id="vis-fiber" checked> Coil twill weave detail</label>
+        </div>
+        <div class="panel-block">
           <h3 class="insp-group-title">Group visibility</h3>
           <label class="check-row"><input type="checkbox" id="vis-enclosure" checked> Enclosure drum</label>
           <label class="check-row"><input type="checkbox" id="vis-frame" checked> Frame · basket · motor</label>
           <label class="check-row"><input type="checkbox" id="vis-internals" checked> Show coil &amp; internals in driver view</label>
-          <label class="check-row"><input type="checkbox" id="vis-fiber" checked> Coil carbon-fiber weave</label>
-          <label class="check-row"><input type="checkbox" id="vis-studio" checked> Studio materials <span class="muted">(off = original flat gray)</span></label>
         </div>
       </div>
     </aside>

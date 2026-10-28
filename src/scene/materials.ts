@@ -1,19 +1,17 @@
-// idk3 v2 — procedural PBR texture + material library.
+// idk3 v3 — procedural PBR texture + FINISH STUDIO.
 //
 // The supplied GLB ships with ZERO materials/textures (gltfpack stripped
-// them). v1 painted every part with a flat color. v2 generates a full set of
-// procedural texture maps on offscreen canvases — albedo, normal (Sobel
-// height→normal) and roughness — and assigns physically plausible
-// MeshPhysicalMaterial sets per component class:
+// them). v3 turns the single v2 texture set into a parametric FINISH SYSTEM:
+// every generator is palette-driven, and four complete finish packs can be
+// swapped live from the UI ("Finish studio"), each regenerating albedo +
+// normal (Sobel height→normal) + roughness maps per component class:
 //
-//   cone      pressed aramid/paper weave with radial striations + clearcoat
-//   rubber    fine matte micro-grain, high roughness, slight sheen
-//   cap       glossy painted composite with orange-peel normal
-//   coil      2×2 twill carbon-fiber composite
-//   metal     brushed gunmetal flange/basket (anisotropic streak roughness)
-//   steel     machined dark motor steel (turning-mark crosshatch)
-//   box       black loudspeaker carpet (bedliner speckle + fiber noise)
+//   obsidian    smoked graphite cone, gunmetal frame, carbon coil (v2 lineage)
+//   copperhead  black ceramic cone, polished copper twill coil, dark bronze
+//   arctic      glazed white-ceramic cone, bright forged aluminum, silver twill
+//   heritage    vintage tan paper cone, cream cloth surround, aged brass
 //
+// MeshPhysicalMaterial sets per class with per-finish parameter overrides.
 // "Original" mode still renders the untouched neutral gray.
 import * as THREE from 'three';
 import type { MaterialKind } from '../core/types';
@@ -74,19 +72,103 @@ function roughFromGray(gray: HTMLCanvasElement): THREE.CanvasTexture {
   return toTexture(gray, false);
 }
 
+/** rgba() helper for hsl-ish triples stored as [r,g,b] arrays. */
+const rgba = (c: readonly number[], a: number): string => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+// ------------------------------------------------------------------ palettes
+
+export interface FinishDef {
+  id: string;
+  label: string;
+  desc: string;
+  chip: [string, string]; // two-tone UI swatch
+}
+
+export const FINISHES: FinishDef[] = [
+  { id: 'obsidian', label: 'Obsidian Graphite', desc: 'Smoked graphite cone · gunmetal frame · carbon coil', chip: ['#26282d', '#6a7078'] },
+  { id: 'copperhead', label: 'Copperhead', desc: 'Black ceramic cone · polished copper coil · dark bronze', chip: ['#1d1f24', '#b0682f'] },
+  { id: 'arctic', label: 'Arctic Forged', desc: 'Glazed ceramic cone · forged aluminum · silver twill', chip: ['#d8dde2', '#9aa2ab'] },
+  { id: 'heritage', label: 'Heritage Paper', desc: 'Vintage paper cone · cream cloth surround · aged brass', chip: ['#b08d5f', '#8a7340'] }
+];
+
+interface Palette {
+  cone: { base: string; strandA: [number, number, number]; strandB: [number, number, number]; speck: [number, number, number]; rough: string; resin: string };
+  rubber: { base: string; grain: [number, number, number]; rough: string };
+  cap: { top: string; bottom: string; speck: [number, number, number]; rough: string };
+  coil: { warp: string; weft: string; sheen: number; rough: string };
+  metal: { base: string; streak: [number, number, number]; rough: string };
+  steel: { base: string; mark: [number, number, number]; speck: [number, number, number] };
+  box: { base: string; tuft: [number, number, number]; rough: string };
+  mat: Partial<Record<MaterialKind, { roughness?: number; metalness?: number; clearcoat?: number; clearcoatRoughness?: number; sheen?: number; sheenColor?: string }>>;
+}
+
+const PALETTES: Record<string, Palette> = {
+  obsidian: {
+    cone: { base: '#26282d', strandA: [40, 42, 48], strandB: [34, 36, 42], speck: [30, 32, 38], rough: '#a8a8a8', resin: '#8f8f8f' },
+    rubber: { base: '#3f444b', grain: [56, 60, 68], rough: '#d4d4d4' },
+    cap: { top: '#23262c', bottom: '#1a1d22', speck: [30, 34, 42], rough: '#3c3c3c' },
+    coil: { warp: '#3c4046', weft: '#20242a', sheen: 0.05, rough: '#8a8a8a' },
+    metal: { base: '#6a7078', streak: [86, 92, 102], rough: '#6f6f6f' },
+    steel: { base: '#4a4f56', mark: [62, 66, 74], speck: [50, 54, 60] },
+    box: { base: '#191b1f', tuft: [30, 33, 38], rough: '#c8c8c8' },
+    mat: {}
+  },
+  copperhead: {
+    cone: { base: '#1d1f24', strandA: [58, 46, 36], strandB: [44, 36, 30], speck: [40, 34, 28], rough: '#969696', resin: '#6e6055' },
+    rubber: { base: '#2e3136', grain: [44, 48, 54], rough: '#dcdcdc' },
+    cap: { top: '#26221c', bottom: '#1b1916', speck: [64, 48, 32], rough: '#343434' },
+    coil: { warp: '#a05a2c', weft: '#5c3018', sheen: 0.12, rough: '#5e5e5e' },
+    metal: { base: '#57503f', streak: [96, 86, 66], rough: '#64645e' },
+    steel: { base: '#3c3a38', mark: [58, 54, 50], speck: [46, 44, 42] },
+    box: { base: '#16171a', tuft: [28, 28, 30], rough: '#cccccc' },
+    mat: {
+      coil: { roughness: 0.38, metalness: 0.62, clearcoat: 0.5, clearcoatRoughness: 0.3 },
+      metal: { roughness: 0.42, metalness: 0.92 },
+      cap: { clearcoat: 0.85, clearcoatRoughness: 0.16 }
+    }
+  },
+  arctic: {
+    cone: { base: '#d8dde2', strandA: [176, 184, 194], strandB: [158, 166, 178], speck: [148, 156, 168], rough: '#7c7c7c', resin: '#6a6a6a' },
+    rubber: { base: '#a9b1ba', grain: [130, 138, 148], rough: '#dedede' },
+    cap: { top: '#cfd6dc', bottom: '#bfc7cf', speck: [120, 128, 138], rough: '#464646' },
+    coil: { warp: '#9aa2ab', weft: '#6d757e', sheen: 0.1, rough: '#7a7a7a' },
+    metal: { base: '#b9c0c7', streak: [220, 226, 232], rough: '#5c5c5c' },
+    steel: { base: '#8f979e', mark: [150, 158, 166], speck: [120, 128, 136] },
+    box: { base: '#3a3f46', tuft: [70, 76, 84], rough: '#c4c4c4' },
+    mat: {
+      cone: { roughness: 0.5, metalness: 0.05, clearcoat: 0.55, clearcoatRoughness: 0.3 },
+      rubber: { sheen: 0.2, sheenColor: '#e8eef4' },
+      metal: { roughness: 0.38, metalness: 0.95 }
+    }
+  },
+  heritage: {
+    cone: { base: '#b08d5f', strandA: [150, 118, 78], strandB: [128, 100, 66], speck: [110, 86, 56], rough: '#b6b6b6', resin: '#8a7a62' },
+    rubber: { base: '#cfc4ae', grain: [168, 158, 138], rough: '#e2e2e2' },
+    cap: { top: '#5e2a2a', bottom: '#4c2222', speck: [90, 44, 44], rough: '#4a4a4a' },
+    coil: { warp: '#9c7b3c', weft: '#6b5226', sheen: 0.1, rough: '#8a8a8a' },
+    metal: { base: '#8a7340', streak: [176, 150, 92], rough: '#787870' },
+    steel: { base: '#55524c', mark: [86, 82, 74], speck: [68, 66, 60] },
+    box: { base: '#33201f', tuft: [62, 40, 38], rough: '#cccccc' },
+    mat: {
+      cone: { roughness: 0.88, metalness: 0.0, clearcoat: 0.06, clearcoatRoughness: 0.7 },
+      rubber: { roughness: 0.95, sheen: 0.4, sheenColor: '#f2e8d0' },
+      metal: { roughness: 0.46, metalness: 0.88 }
+    }
+  }
+};
+
 // ------------------------------------------------------------------ textures
 
-/** Pressed aramid/paper cone: crosshatch weave + radial striations + speckle. */
-function coneMaps(): Maps {
+/** Pressed composite cone: crosshatch weave + radial striations + speckle. */
+function coneMaps(p: Palette['cone']): Maps {
   const S = 512;
   const { c: albedo, g: a } = makeCanvas(S);
-  a.fillStyle = '#26282d';
+  a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
 
   // woven under-layer: two directional strand sets
   for (let i = 0; i < 220; i++) {
-    const light = 34 + Math.random() * 18;
-    a.strokeStyle = `rgba(${light},${light + 2},${light + 6},${0.10 + Math.random() * 0.12})`;
+    a.strokeStyle = rgba(p.strandA, 0.10 + Math.random() * 0.12);
     a.lineWidth = 0.8 + Math.random() * 1.4;
     a.beginPath();
     const y = Math.random() * S;
@@ -94,8 +176,7 @@ function coneMaps(): Maps {
     a.stroke();
   }
   for (let i = 0; i < 220; i++) {
-    const light = 30 + Math.random() * 16;
-    a.strokeStyle = `rgba(${light},${light + 2},${light + 6},${0.08 + Math.random() * 0.10})`;
+    a.strokeStyle = rgba(p.strandB, 0.08 + Math.random() * 0.10);
     a.lineWidth = 0.8 + Math.random() * 1.2;
     a.beginPath();
     const x = Math.random() * S;
@@ -104,8 +185,7 @@ function coneMaps(): Maps {
   }
   // pressed-paper speckle
   for (let i = 0; i < 2600; i++) {
-    const l = 22 + Math.random() * 40;
-    a.fillStyle = `rgba(${l},${l + 2},${l + 6},${Math.random() * 0.16})`;
+    a.fillStyle = rgba(p.speck, Math.random() * 0.16);
     a.fillRect(Math.random() * S, Math.random() * S, 1.4, 1.4);
   }
 
@@ -115,7 +195,8 @@ function coneMaps(): Maps {
   hh.fillRect(0, 0, S, S);
   hh.globalAlpha = 0.5;
   for (let i = 0; i < 160; i++) {
-    hh.strokeStyle = `rgba(${Math.random() > 0.5 ? 200 : 60},${Math.random() > 0.5 ? 200 : 60},${Math.random() > 0.5 ? 200 : 60},0.5)`;
+    const v = Math.random() > 0.5 ? 200 : 60;
+    hh.strokeStyle = `rgba(${v},${v},${v},0.5)`;
     hh.lineWidth = 1 + Math.random() * 1.6;
     hh.beginPath();
     const y = Math.random() * S;
@@ -123,7 +204,8 @@ function coneMaps(): Maps {
     hh.stroke();
   }
   for (let i = 0; i < 160; i++) {
-    hh.strokeStyle = `rgba(${Math.random() > 0.5 ? 190 : 65},${Math.random() > 0.5 ? 190 : 65},${Math.random() > 0.5 ? 190 : 65},0.4)`;
+    const v = Math.random() > 0.5 ? 190 : 65;
+    hh.strokeStyle = `rgba(${v},${v},${v},0.4)`;
     hh.lineWidth = 1 + Math.random() * 1.4;
     hh.beginPath();
     const x = Math.random() * S;
@@ -139,7 +221,7 @@ function coneMaps(): Maps {
 
   // roughness map: base rough with darker (smoother) resin pools
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#a8a8a8';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   for (let i = 0; i < 900; i++) {
     const v = 120 + Math.random() * 90;
@@ -158,14 +240,13 @@ function coneMaps(): Maps {
 }
 
 /** Matte rubber micro-grain: fine noise + faint mold seams. */
-function rubberMaps(): Maps {
+function rubberMaps(p: Palette['rubber']): Maps {
   const S = 256;
   const { c: albedo, g: a } = makeCanvas(S);
-  a.fillStyle = '#3f444b';
+  a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
   for (let i = 0; i < 5200; i++) {
-    const l = 48 + Math.random() * 34;
-    a.fillStyle = `rgba(${l},${l + 2},${l + 7},${0.05 + Math.random() * 0.12})`;
+    a.fillStyle = rgba(p.grain, 0.05 + Math.random() * 0.12);
     const s = 0.8 + Math.random() * 1.7;
     a.fillRect(Math.random() * S, Math.random() * S, s, s);
   }
@@ -189,7 +270,7 @@ function rubberMaps(): Maps {
     hh.stroke();
   }
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#d4d4d4';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   for (let i = 0; i < 700; i++) {
     const v = 175 + Math.random() * 70;
@@ -203,8 +284,8 @@ function rubberMaps(): Maps {
   };
 }
 
-/** 2×2 twill carbon-fiber for the voice-coil former. */
-function carbonMaps(): Maps {
+/** Twill-woven coil former: 2×2 twill, palette-driven strand colors. */
+function coilMaps(p: Palette['coil']): Maps {
   const S = 256;
   const cell = 16;
   const n = S / cell;
@@ -221,9 +302,9 @@ function carbonMaps(): Maps {
         twill ? (ix + 1) * cell : (ix + 0.5) * cell,
         twill ? (iy + 0.5) * cell : (iy + 1) * cell
       );
-      grad.addColorStop(0, twill ? '#3c4046' : '#20242a');
-      grad.addColorStop(0.5, twill ? '#565c64' : '#2b3037');
-      grad.addColorStop(1, twill ? '#3c4046' : '#20242a');
+      grad.addColorStop(0, twill ? p.warp : p.weft);
+      grad.addColorStop(0.5, twill ? lighten(p.warp, 26) : lighten(p.weft, 14));
+      grad.addColorStop(1, twill ? p.warp : p.weft);
       a.fillStyle = grad;
       a.fillRect(ix * cell, iy * cell, cell, cell);
       // weave height: bright = strand crest
@@ -234,11 +315,11 @@ function carbonMaps(): Maps {
   }
   // sheen speckle over the twill
   for (let i = 0; i < 700; i++) {
-    a.fillStyle = `rgba(255,255,255,${Math.random() * 0.05})`;
+    a.fillStyle = `rgba(255,255,255,${Math.random() * p.sheen})`;
     a.fillRect(Math.random() * S, Math.random() * S, 1, 1);
   }
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#8a8a8a';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   return {
     map: toTexture(albedo, true, 2.5),
@@ -247,15 +328,20 @@ function carbonMaps(): Maps {
   };
 }
 
-/** Brushed gunmetal: dense horizontal streaks (anisotropic look). */
-function brushedMaps(): Maps {
+function lighten(hex: string, amt: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, (n >> 16) + amt), g = Math.min(255, ((n >> 8) & 255) + amt), b = Math.min(255, (n & 255) + amt);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+/** Brushed metal: dense horizontal streaks (anisotropic look). */
+function brushedMaps(p: Palette['metal']): Maps {
   const S = 512;
   const { c: albedo, g: a } = makeCanvas(S);
-  a.fillStyle = '#6a7078';
+  a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
   for (let i = 0; i < 2400; i++) {
-    const l = 78 + Math.random() * 60;
-    a.strokeStyle = `rgba(${l},${l + 3},${l + 8},${0.06 + Math.random() * 0.18})`;
+    a.strokeStyle = rgba(p.streak, 0.06 + Math.random() * 0.18);
     a.lineWidth = 0.5 + Math.random() * 0.9;
     const y = Math.random() * S;
     const x0 = Math.random() * S;
@@ -280,7 +366,7 @@ function brushedMaps(): Maps {
     hh.stroke();
   }
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#6f6f6f';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   for (let i = 0; i < 1800; i++) {
     const v = 70 + Math.random() * 110;
@@ -300,15 +386,14 @@ function brushedMaps(): Maps {
   };
 }
 
-/** Machined dark steel: radial turning marks for motor parts. */
-function steelMaps(): Maps {
+/** Machined steel: radial turning marks for motor parts. */
+function steelMaps(p: Palette['steel']): Maps {
   const S = 512;
   const { c: albedo, g: a } = makeCanvas(S);
-  a.fillStyle = '#4a4f56';
+  a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
   for (let i = 0; i < 1800; i++) {
-    const l = 58 + Math.random() * 46;
-    a.strokeStyle = `rgba(${l},${l + 2},${l + 7},${0.07 + Math.random() * 0.15})`;
+    a.strokeStyle = rgba(p.mark, 0.07 + Math.random() * 0.15);
     a.lineWidth = 0.5 + Math.random() * 1.0;
     const y = Math.random() * S;
     a.beginPath();
@@ -317,8 +402,7 @@ function steelMaps(): Maps {
     a.stroke();
   }
   for (let i = 0; i < 900; i++) {
-    const l = 45 + Math.random() * 40;
-    a.fillStyle = `rgba(${l},${l + 2},${l + 6},${Math.random() * 0.2})`;
+    a.fillStyle = rgba(p.speck, Math.random() * 0.2);
     a.fillRect(Math.random() * S, Math.random() * S, 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
   const { c: height, g: hh } = makeCanvas(S);
@@ -340,16 +424,15 @@ function steelMaps(): Maps {
   };
 }
 
-/** Black speaker carpet for the enclosure drum. */
-function carpetMaps(): Maps {
+/** Loudspeaker carpet for the enclosure drum. */
+function carpetMaps(p: Palette['box']): Maps {
   const S = 512;
   const { c: albedo, g: a } = makeCanvas(S);
-  a.fillStyle = '#191b1f';
+  a.fillStyle = p.base;
   a.fillRect(0, 0, S, S);
   // fiber tufts
   for (let i = 0; i < 5200; i++) {
-    const l = 26 + Math.random() * 26;
-    a.strokeStyle = `rgba(${l},${l + 2},${l + 6},${0.12 + Math.random() * 0.22})`;
+    a.strokeStyle = rgba(p.tuft, 0.12 + Math.random() * 0.22);
     a.lineWidth = 0.7;
     const x = Math.random() * S, y = Math.random() * S;
     const ang = Math.random() * Math.PI;
@@ -375,7 +458,7 @@ function carpetMaps(): Maps {
     hh.stroke();
   }
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#c8c8c8';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   return {
     map: toTexture(albedo, true, 3),
@@ -385,17 +468,16 @@ function carpetMaps(): Maps {
 }
 
 /** Glossy painted dust cap: subtle orange-peel normal, low roughness. */
-function capMaps(): Maps {
+function capMaps(p: Palette['cap']): Maps {
   const S = 256;
   const { c: albedo, g: a } = makeCanvas(S);
   const grad = a.createLinearGradient(0, 0, 0, S);
-  grad.addColorStop(0, '#23262c');
-  grad.addColorStop(1, '#1a1d22');
+  grad.addColorStop(0, p.top);
+  grad.addColorStop(1, p.bottom);
   a.fillStyle = grad;
   a.fillRect(0, 0, S, S);
   for (let i = 0; i < 900; i++) {
-    const l = 26 + Math.random() * 20;
-    a.fillStyle = `rgba(${l},${l + 3},${l + 8},${Math.random() * 0.1})`;
+    a.fillStyle = rgba(p.speck, Math.random() * 0.1);
     a.fillRect(Math.random() * S, Math.random() * S, 1.5, 1.5);
   }
   const { c: height, g: hh } = makeCanvas(S);
@@ -411,7 +493,7 @@ function capMaps(): Maps {
     hh.fill();
   }
   const { c: rough, g: r } = makeCanvas(S);
-  r.fillStyle = '#3c3c3c';
+  r.fillStyle = p.rough;
   r.fillRect(0, 0, S, S);
   for (let i = 0; i < 500; i++) {
     const v = 40 + Math.random() * 50;
@@ -431,76 +513,89 @@ function capMaps(): Maps {
 
 export type MaterialMode = 'studio' | 'original';
 
+interface CoilRef { mat: THREE.MeshPhysicalMaterial; map: THREE.Texture | null }
+
 export class MaterialLibrary {
-  private studio = new Map<MaterialKind, THREE.MeshPhysicalMaterial>();
+  private cache = new Map<string, Map<MaterialKind, THREE.MeshPhysicalMaterial>>();
+  private coilRefs = new Map<string, CoilRef>();
+  private fiberOn = true;
   private originalMat: THREE.MeshStandardMaterial;
-  private coilFiber: THREE.MeshPhysicalMaterial | null = null;
-  private coilMap: THREE.CanvasTexture | null = null;
   mode: MaterialMode = 'studio';
+  private current = FINISHES[0].id;
 
   constructor() {
-    const coneMapsT = coneMaps();
-    const rubberMapsT = rubberMaps();
-    const carbonMapsT = carbonMaps();
-    const brushedMapsT = brushedMaps();
-    const steelMapsT = steelMaps();
-    const carpetMapsT = carpetMaps();
-    const capMapsT = capMaps();
-
-    const rubber = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.92, metalness: 0.0, side: THREE.DoubleSide,
-      sheen: 0.35, sheenRoughness: 0.7, sheenColor: new THREE.Color('#3a4250'),
-      ...rubberMapsT
-    });
-    const cone = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.78, metalness: 0.06,
-      clearcoat: 0.14, clearcoatRoughness: 0.55,
-      ...coneMapsT
-    });
-    const cap = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.32, metalness: 0.10,
-      clearcoat: 0.65, clearcoatRoughness: 0.22,
-      ...capMapsT
-    });
-    const coil = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.48, metalness: 0.22, side: THREE.DoubleSide,
-      clearcoat: 0.3, clearcoatRoughness: 0.4,
-      ...carbonMapsT
-    });
-    const metal = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.5, metalness: 0.88,
-      ...brushedMapsT
-    });
-    const steel = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.55, metalness: 0.92,
-      ...steelMapsT
-    });
-    const box = new THREE.MeshPhysicalMaterial({
-      color: '#ffffff', roughness: 0.95, metalness: 0.02,
-      ...carpetMapsT
-    });
-
-    this.studio.set('rubber', rubber);
-    this.studio.set('cone', cone);
-    this.studio.set('cap', cap);
-    this.studio.set('coil', coil);
-    this.studio.set('metal', metal);
-    this.studio.set('steel', steel);
-    this.studio.set('box', box);
-    this.coilFiber = coil;
-    this.coilMap = carbonMapsT.map ?? null;
     this.originalMat = new THREE.MeshStandardMaterial({ color: '#b9bdc4', roughness: 0.72, metalness: 0.04 });
+    this.buildFinish(this.current);
   }
 
+  get finishId(): string { return this.current; }
+
+  /** Generate (and cache) the full material set for a finish id. */
+  private buildFinish(id: string): Map<MaterialKind, THREE.MeshPhysicalMaterial> {
+    const cached = this.cache.get(id);
+    if (cached) return cached;
+    const p = PALETTES[id] ?? PALETTES[FINISHES[0].id];
+    const over = (k: MaterialKind) => p.mat[k] ?? {};
+
+    const rubber = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.0, side: THREE.DoubleSide,
+      sheenRoughness: 0.7, sheenColor: new THREE.Color('#3a4250'),
+      roughness: 0.92, sheen: 0.35, ...rubberMaps(p.rubber), ...over('rubber')
+    });
+    const cone = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.06,
+      clearcoatRoughness: 0.55,
+      roughness: 0.78, clearcoat: 0.14, ...coneMaps(p.cone), ...over('cone')
+    });
+    const cap = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.10,
+      clearcoatRoughness: 0.22,
+      roughness: 0.32, clearcoat: 0.65, ...capMaps(p.cap), ...over('cap')
+    });
+    const coil = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.22, side: THREE.DoubleSide,
+      clearcoatRoughness: 0.4,
+      roughness: 0.48, clearcoat: 0.3, ...coilMaps(p.coil), ...over('coil')
+    });
+    const metal = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.88,
+      roughness: 0.5, ...brushedMaps(p.metal), ...over('metal')
+    });
+    const steel = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.92,
+      roughness: 0.55, ...steelMaps(p.steel), ...over('steel')
+    });
+    const box = new THREE.MeshPhysicalMaterial({
+      color: '#ffffff', metalness: 0.02,
+      roughness: 0.95, ...carpetMaps(p.box), ...over('box')
+    });
+
+    const set = new Map<MaterialKind, THREE.MeshPhysicalMaterial>([
+      ['rubber', rubber], ['cone', cone], ['cap', cap], ['coil', coil],
+      ['metal', metal], ['steel', steel], ['box', box]
+    ]);
+    this.cache.set(id, set);
+    this.coilRefs.set(id, { mat: coil, map: coil.map ?? null });
+    this.applyFiber(id);
+    return set;
+  }
+
+  /** Coil weave detail toggle — applies to the ACTIVE finish's coil. */
   setFiberDetail(on: boolean): void {
-    if (this.coilFiber) {
-      this.coilFiber.map = on ? this.coilMap : null;
-      this.coilFiber.needsUpdate = true;
-    }
+    this.fiberOn = on;
+    this.applyFiber(this.current);
+  }
+
+  private applyFiber(id: string): void {
+    const ref = this.coilRefs.get(id);
+    if (!ref) return;
+    ref.mat.map = this.fiberOn ? ref.map : null;
+    ref.mat.needsUpdate = true;
   }
 
   for(kind: MaterialKind): THREE.Material {
-    return this.mode === 'studio' ? this.studio.get(kind)! : this.originalMat;
+    if (this.mode === 'original') return this.originalMat;
+    return this.cache.get(this.current)!.get(kind)!;
   }
 
   applyTo(mesh: THREE.Mesh, kind: MaterialKind): void {
@@ -510,6 +605,15 @@ export class MaterialLibrary {
 
   setMode(mode: MaterialMode, meshes: { mesh: THREE.Mesh; kind: MaterialKind }[]): void {
     this.mode = mode;
+    for (const m of meshes) m.mesh.material = this.for(m.kind);
+  }
+
+  /** Swap the active finish pack and repaint every registered mesh. */
+  setFinish(id: string, meshes: { mesh: THREE.Mesh; kind: MaterialKind }[]): void {
+    if (!PALETTES[id]) return;
+    this.current = id;
+    this.mode = 'studio';
+    this.buildFinish(id);
     for (const m of meshes) m.mesh.material = this.for(m.kind);
   }
 }

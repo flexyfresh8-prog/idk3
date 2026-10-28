@@ -10,10 +10,10 @@ import { DEFAULT_PARAMS, type SimParams } from './core/types';
 import { auditModel, type AuditResult, type AuditedPart } from './core/gltfAudit';
 import { SurroundDeformer } from './core/surroundDeform';
 import { ConeAssembly } from './core/assembly';
-import { ExcursionPhysics } from './core/physics';
+import { ExcursionPhysics, calibratedVoltageGain } from './core/physics';
 import { AudioEngine } from './audio/audioEngine';
 import { Stage } from './scene/stage';
-import { MaterialLibrary } from './scene/materials';
+import { MaterialLibrary, FINISHES } from './scene/materials';
 import { ParamsPanel } from './ui/paramsPanel';
 import { Inspector } from './ui/inspector';
 import { PlayerUI } from './ui/playerUI';
@@ -191,9 +191,31 @@ async function boot(): Promise<void> {
   groupChecks.frame.addEventListener('change', applyVisibility);
   groupChecks.motor.addEventListener('change', applyVisibility);
   $('vis-fiber').addEventListener('change', (e) => mats.setFiberDetail((e.target as HTMLInputElement).checked));
-  $('vis-studio').addEventListener('change', (e) => {
-    mats.setMode((e.target as HTMLInputElement).checked ? 'studio' : 'original', kindList);
-  });
+
+  // ---------------- Finish studio: swap the whole PBR pack live
+  const finishList = $('finish-list');
+  for (const f of FINISHES) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'finish-swatch' + (f.id === mats.finishId ? ' active' : '');
+    btn.dataset.finish = f.id;
+    btn.title = f.desc;
+    btn.setAttribute('aria-label', `Finish: ${f.label}`);
+    const chip = document.createElement('span');
+    chip.className = 'finish-chip';
+    chip.style.background = `linear-gradient(135deg, ${f.chip[0]} 0%, ${f.chip[0]} 46%, ${f.chip[1]} 54%, ${f.chip[1]} 100%)`;
+    const txt = document.createElement('span');
+    txt.className = 'finish-label';
+    txt.textContent = f.label;
+    btn.appendChild(chip);
+    btn.appendChild(txt);
+    btn.addEventListener('click', () => {
+      mats.setFinish(f.id, kindList);
+      finishList.querySelectorAll('.finish-swatch').forEach((b) => b.classList.toggle('active', (b as HTMLElement).dataset.finish === f.id));
+      toast(`Finish: ${f.label}.`, 'info');
+    });
+    finishList.appendChild(btn);
+  }
 
   function resetSim(): void {
     paramsPanel.resetToDefaults();
@@ -219,20 +241,22 @@ async function boot(): Promise<void> {
 
     const frame = engine.frame(dt, params.hfCutoffHz);
 
-    // TRUE dot-to-dot physics: the cone is a full electro-mechanical system
-    // (coil-force lag + back-EMF braking + nonlinear Bl(x) + Duffing spring)
+    // TRUE dot-to-dot physics: the cone is a fully coupled electro-mechanical
+    // system (voltage → coil current → Lorentz force → motion, with back-EMF,
+    // Le(x) inductance droop, nonlinear Bl(x), Duffing spring + box air load)
     // driven by the actual bass waveform samples, integrated with RK4 one
-    // step per audio sample. Force is calibrated so a full-scale
+    // step per audio sample. Voltage is calibrated so a full-scale
     // (AGC-normalized) note at resonance produces ≈ maxExcursion of travel.
     const maxUnits = params.maxExcursionMM * MM;
-    const wn = 2 * Math.PI * params.resonanceHz; // driver resonance Fs
-    const forceGain = wn * wn * maxUnits * 1.25
+    const vGain = calibratedVoltageGain(maxUnits, params.resonanceHz)
       * params.bassSensitivity * params.animationIntensity;
     const d = debugD !== null ? debugD : physics.stepAudio(frame.driveSamples, frame.driveSampleRate, dt, {
-      forceGain,
+      voltageGain: vGain,
       zeta: 0.30 + 0.55 * clamp01(params.smoothing),
       maxUnits,
-      resonanceHz: params.resonanceHz
+      resonanceHz: params.resonanceHz,
+      boxLoad: params.boxLoad,
+      coneMass: params.coneMass
     });
 
     // Both the moving assembly and the surround field use the same signed
@@ -275,7 +299,7 @@ async function boot(): Promise<void> {
 
   // ------------------------------------------------------------------ test hook (used by automated browser tests)
   (window as any).__sim = {
-    version: '2.0.0',
+    version: '3.0.0',
     mapping: () => audit.parts.map((p) => ({
       index: p.index, name: p.nodeName, label: p.spec.label, role: p.spec.role,
       group: p.spec.group, verts: p.verts, tris: p.tris,

@@ -1,62 +1,85 @@
-// idk3 v2 — TRUE electro-mechanical cone mechanics ("dot to dot"), reworked.
+// idk3 v3 — FULLY COUPLED electro-mechanical cone mechanics.
 //
-// The moving assembly is a real 3-state electro-mechanical system driven BY
-// THE AUDIO ITSELF, integrated one physics step per audio sample with RK4:
+// v2 used a 3-state model where back-EMF braking was a separate bolted-on
+// damping term. v3 replaces it with the textbook (Klippel-style) lumped
+// transducer model in which the ELECTRICAL and MECHANICAL domains are truly
+// coupled — the audio signal is a VOLTAGE across the voice coil, and every
+// cross-domain effect emerges from the physics instead of being faked:
 //
-//   Electrical (voice-coil current lag):
-//     τ_i · dF/dt = F_target(t) − F
+//   Electrical domain (voice-coil circuit):
+//     Le(x)·di/dt = V(t) − Re·i − Bl(x)·v
 //
-//     F is the effective "current force" state. The drive voltage V(t) (the
-//     low-passed music sample) does not teleport into force: the coil has
-//     inductance + resistance, so force slews toward the target with a short
-//     time constant τ_i ≈ 0.35 ms. This adds the correct extra phase lag at
-//     high frequency and softens sub-sample transients like a real amp+coil.
+//     V(t)  — drive voltage: the actual low-passed, AGC-normalized music
+//             samples (±1.4 full scale)
+//     i     — coil current state. Force is NOT proportional to voltage; it
+//             is proportional to current, and current has its own dynamics.
+//     Re    — DC resistance
+//     Le(x) — NONLINEAR inductance: droops as the coil leaves the gap
+//             (Le = Le0 / (1 + kL·s²)), adding real inductive phase lag and
+//             top-end force softening at large excursion.
+//     Bl(x)·v — BACK-EMF. The moving coil is a generator: its velocity
+//             opposes the drive current. Electromagnetic braking (the Bl²/Re
+//             "damping" of v2) is no longer a term we add — it FALLS OUT of
+//             this coupling, including its correct frequency dependence.
 //
-//   Mechanical (Newton, normalized mass m = 1):
-//     a = F·Bl(x) − k(x)·x − c_mech·v − c_em·v − c_aero·v·|v|
+//   Mechanical domain (Newton, normalized moving mass m):
+//     m·a = Bl(x)·i − k(x)·x − cMech·v − cAero·v·|v|
 //
-//     Bl(x) — NONLINEAR force factor. As the coil leaves the magnetic gap at
-//             large excursion the coupling weakens (a smooth quadratic
-//             falloff), so extreme travel softens instead of buzzing.
-//     k(x)  — suspension stiffness: linear in the working range, then
-//             PROGRESSIVELY stiffening past Xmax (Duffing hardening — the
-//             classic spider model), with a slight ASYMMETRY term: real
-//             suspensions are stiffer outward than inward.
-//     c_mech — spider/surround/air losses (from "Motion smoothing").
-//     c_em   — ELECTROMAGNETIC braking from back-EMF (Bl²/Re in the physical
-//             model): a velocity-proportional drag that exists only while the
-//             coil moves in the gap. It is what compresses the resonance peak
-//             of a real driver. Split from the user damping ratio.
-//     c_aero — small quadratic (turbulent) air-load term: prevents runaway
-//             velocity on extreme gain settings the way real air load does.
+//     Bl(x)  — nonlinear force factor: smooth quadratic falloff once the
+//              coil exits the magnetic gap (extreme travel softens).
+//     k(x)   — suspension stiffness: linear + Duffing hardening past Xmax
+//              (progressive spider stiffening) + slight outward/inward
+//              asymmetry + OPTIONAL SEALED-BOX AIR SPRING (boxLoad): a
+//              closed enclosure adds compliance, raising the effective
+//              resonance exactly like a real closed box (√(1+0.9·load)).
+//     cMech  — mechanical losses (spider/surround) from "Motion smoothing".
+//     cAero  — quadratic air-load: turbulence limits runaway velocity.
+//     m      — normalized moving mass (new "Cone mass" param): heavier
+//              cones attack slower and overshoot deeper at the same damping.
 //
-// Integration: RK4 at the AUDIO sample rate (h = 1/fs ≈ 20.8 µs at 48 kHz).
-// The fastest time constant (τ_i) resolves with ~6 steps per time constant and
-// the mechanical resonance with >1000× margin — the motion you see is the
-// actual solution of the coupled differential equations for the actual music
-// samples, not a tween.
+// Calibration: with Bl = 1 (normalized), back-EMF damping = Bl²/Re = 1/Re.
+// We set Re = 1/(EM_SHARE·2ζωn) so the total damping ratio at rest equals
+// the v2 feel, and derive the voltage gain so a full-scale sine AT resonance
+// produces ≈ 1.25 × Xmax of excursion (the same headroom convention v2 used).
+//
+// Integration: RK4, one step per AUDIO SAMPLE (h ≈ 20.8 µs @ 48 kHz). The
+// electrical time constant τ = Le0/Re resolves in ~6 sub-steps, the mechanical
+// resonance with >1000× margin. The motion you see is the actual solution of
+// the coupled ODEs for the actual music samples — not a tween.
 
 const TWO_PI = Math.PI * 2;
 
 // Model constants
-const TAU_I = 0.00035;          // coil current lag (s) — Le/Re of a typical VC
-const EM_DAMP_SHARE = 0.38;     // share of user damping delivered by back-EMF
-const BL_ROLL_OFF = 0.42;       // force-factor falloff depth at extreme x
-const BL_SPAN = 1.7;            // falloff span (× Xmax)
-const SPRING_ASYMMETRY = 0.16;  // outward-stiffer asymmetry (× x/Xmax)
-const AERO_COEFF = 0.05;        // quadratic air-load coefficient (tuned)
+const LE_TAU = 0.00035;        // electrical time constant Le0/Re (s)
+const EM_SHARE = 0.38;         // share of total damping realized as back-EMF
+const BL_ROLL_OFF = 0.42;      // force-factor falloff depth at extreme x
+const BL_SPAN = 1.7;           // falloff span (× Xmax)
+const LE_DROOP = 0.35;         // inductance droop depth at extreme x
+const SPRING_ASYMMETRY = 0.16; // outward-stiffer asymmetry (× x/Xmax)
+const AERO_COEFF = 0.05;       // quadratic air-load coefficient
+const BOX_K = 0.9;             // sealed-box stiffness gain at boxLoad = 1
 
 export interface StepOpts {
-  forceGain: number;   // world-units of force per unit of normalized audio
+  voltageGain: number; // drive voltage (normalized) per unit of AGC audio
   zeta: number;        // user damping ratio 0.30..0.85 (mech + EM combined)
   maxUnits: number;    // Xmax (world units) — progressive stiffening beyond this
   resonanceHz?: number; // driver free-air resonance Fs (default 32 Hz)
+  boxLoad?: number;    // sealed-enclosure air-spring load 0..1 (default 0)
+  coneMass?: number;   // normalized moving mass 0.6..1.8 (default 1)
+}
+
+/** Voltage gain that makes a full-scale sine at resonance produce ≈
+ *  1.25 × Xmax of excursion (matches the v2 headroom convention).
+ *  Derivation: x_res ≈ V·(cEm/cTotal)/ωn = V·EM_SHARE/ωn for Bl = 1. */
+export function calibratedVoltageGain(maxUnits: number, resonanceHz: number): number {
+  const wn = TWO_PI * Math.max(5, resonanceHz);
+  return 1.25 * maxUnits * wn / EM_SHARE;
 }
 
 export class ExcursionPhysics {
+  private i = 0;          // coil current (normalized)
   private x = 0;          // displacement (world units, along driver axis)
   private v = 0;          // velocity (world units / s)
-  private F = 0;          // effective coil force state (lags the target)
   private lastRes = 32;   // cached resonance for silent-path integration
 
   /** Force factor Bl(x): 1 in the gap, smoothly falling once the coil leaves. */
@@ -66,12 +89,19 @@ export class ExcursionPhysics {
     return 1 - BL_ROLL_OFF * s * s;
   }
 
-  /** Suspension stiffness k(x): Duffing hardening past Xmax + asymmetry. */
-  private static stiff(x: number, wn2: number, maxUnits: number): number {
+  /** Inductance droop Le(x): the gap gets "leaky" at large excursion. */
+  private static leDrop(x: number, maxUnits: number, le0: number): number {
+    const s = Math.abs(x) / (maxUnits * BL_SPAN);
+    if (s >= 1) return le0 / (1 + LE_DROOP);
+    return le0 / (1 + LE_DROOP * s * s);
+  }
+
+  /** Suspension stiffness k(x): box spring + Duffing hardening + asymmetry. */
+  private static stiff(x: number, wn2: number, maxUnits: number, boxLoad: number): number {
+    let k = wn2 * (1 + BOX_K * boxLoad);
     const over = Math.abs(x) - maxUnits;
-    let k = wn2;
     if (over > 0) {
-      const q = (over / maxUnits);
+      const q = over / maxUnits;
       k *= 1 + 8 * q * q;
     }
     // asymmetry: the suspension reads stiffer in the outward direction
@@ -87,17 +117,21 @@ export class ExcursionPhysics {
    * @param dt          frame delta (s) — keeps integration time-correct after stalls
    */
   stepAudio(samples: Float32Array | null, sampleRate: number, dt: number, opts: StepOpts): number {
-    const { forceGain, zeta, maxUnits } = opts;
+    const { voltageGain, zeta, maxUnits } = opts;
     const fs = opts.resonanceHz && opts.resonanceHz > 5 ? opts.resonanceHz : 32;
     this.lastRes = fs;
     const wn = TWO_PI * fs;
     const wn2 = wn * wn;
+    const boxLoad = opts.boxLoad ?? 0;
+    const mass = Math.max(0.2, opts.coneMass ?? 1);
 
-    // damping split: mechanical losses + electromagnetic back-EMF braking
+    // Electrical parameters: back-EMF realizes EM_SHARE of the total damping.
     const cTotal = 2 * zeta * wn;
-    const cEm = cTotal * EM_DAMP_SHARE;          // Bl²/Re effect
-    const cMech = cTotal - cEm;
-    const cAero = AERO_COEFF * wn2 * maxUnits;   // scales with the suspension
+    const cEm = EM_SHARE * cTotal;              // = Bl²/Re with Bl = 1
+    const re = 1 / Math.max(1e-9, cEm);         // DC resistance
+    const le0 = LE_TAU * re;                    // τ = Le0/Re
+    const cMech = cTotal - cEm;                 // spider/surround losses
+    const cAero = AERO_COEFF * wn2 * maxUnits;  // scales with the suspension
 
     let n: number;
     let h: number;
@@ -112,7 +146,7 @@ export class ExcursionPhysics {
       src = samples.subarray(samples.length - n);
       h = dt / n;
     } else {
-      // silent path: no drive, pure mechanical + EM ring-down.
+      // silent path: no drive, pure electro-mechanical ring-down.
       // Sub-step capped at 4 ms so RK4 stays comfortably inside its stability
       // region even after a long stall (background tab → dt up to 100 ms).
       const span = Math.min(Math.max(dt, 1 / 120), 0.12);
@@ -120,31 +154,35 @@ export class ExcursionPhysics {
       h = span / n;
     }
 
-    // RK4 over the 3-state system y = (F, x, v)
-    const y0 = [this.F, this.x, this.v];
+    // RK4 over the 3-state system y = (i, x, v)
+    const y0 = [this.i, this.x, this.v];
     const k1 = [0, 0, 0], k2 = [0, 0, 0], k3 = [0, 0, 0], k4 = [0, 0, 0];
     const yTmp = [0, 0, 0];
 
     const deriv = (y: number[], V: number, out: number[]): void => {
-      const [F, xx, vv] = y;
-      out[0] = (forceGain * V - F) / TAU_I;                       // force slew
+      const [ii, xx, vv] = y;
+      // electrical: Le(x)·di/dt = V − Re·i − Bl(x)·v   (back-EMF coupled)
+      const le = ExcursionPhysics.leDrop(xx, maxUnits, le0);
+      out[0] = (V - re * ii - ExcursionPhysics.blFall(xx, maxUnits) * vv) / le;
+      // mechanical: m·a = Bl(x)·i − k(x)·x − cMech·v − cAero·v·|v|
       const bl = ExcursionPhysics.blFall(xx, maxUnits);
-      const k = ExcursionPhysics.stiff(xx, wn2, maxUnits);
+      const k = ExcursionPhysics.stiff(xx, wn2, maxUnits, boxLoad);
       const aero = cAero * vv * Math.abs(vv) / Math.max(1e-9, maxUnits);
-      out[2] = F * bl - k * xx - cMech * vv - cEm * vv - aero;    // acceleration
-      out[1] = vv;                                                // velocity
+      out[2] = (bl * ii - k * xx - cMech * vv - aero) / mass;
+      out[1] = vv;
     };
 
     for (let i = 0; i < n; i++) {
-      const V = src ? src[i] : 0;
+      const V = src ? src[i] * voltageGain : 0;
 
       deriv(y0, V, k1);
       for (let s = 0; s < 3; s++) yTmp[s] = y0[s] + 0.5 * h * k1[s];
-      deriv(yTmp, (V + (src && i + 1 < n ? src[i + 1] : V)) * 0.5, k2);
+      const Vh = src && i + 1 < n ? (src[i] + src[i + 1]) * 0.5 * voltageGain : V;
+      deriv(yTmp, Vh, k2);
       for (let s = 0; s < 3; s++) yTmp[s] = y0[s] + 0.5 * h * k2[s];
-      deriv(yTmp, (V + (src && i + 1 < n ? src[i + 1] : V)) * 0.5, k3);
+      deriv(yTmp, Vh, k3);
       for (let s = 0; s < 3; s++) yTmp[s] = y0[s] + h * k3[s];
-      deriv(yTmp, src && i + 1 < n ? src[i + 1] : V, k4);
+      deriv(yTmp, src && i + 1 < n ? src[i + 1] * voltageGain : V, k4);
 
       for (let s = 0; s < 3; s++) {
         y0[s] += (h / 6) * (k1[s] + 2 * k2[s] + 2 * k3[s] + k4[s]);
@@ -157,15 +195,16 @@ export class ExcursionPhysics {
       if (!isFinite(y0[1])) { y0[1] = 0; y0[2] = 0; y0[0] = 0; }
     }
 
-    this.F = y0[0];
+    this.i = y0[0];
     this.x = y0[1];
     this.v = y0[2];
     return this.x;
   }
 
-  reset(): void { this.x = 0; this.v = 0; this.F = 0; }
+  reset(): void { this.x = 0; this.v = 0; this.i = 0; }
 
   get displacement(): number { return this.x; }
   get velocity(): number { return this.v; }
+  get coilCurrent(): number { return this.i; }
   get resonanceHz(): number { return this.lastRes; }
 }

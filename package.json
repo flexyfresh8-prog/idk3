@@ -1,9 +1,9 @@
 {
   "name": "idk3-subwoofer-simulator",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "Interactive audio-reactive subwoofer simulator — Three.js + Web Audio API",
+  "description": "Interactive audio-reactive subwoofer dyno lab — Three.js + Web Audio API, coupled electro-mechanical physics, swappable PBR finish packs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

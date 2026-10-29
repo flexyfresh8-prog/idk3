@@ -334,8 +334,18 @@ export class SurroundDeformer {
 
   /** Apply axial excursion d (world units, signed along `axis`) + bulge.
    *  GPU path: this only writes uniforms (converted to LOCAL units — the
-   *  vertex shader works in local space) — the shader does the rest. */
-  apply(d: number, strength: number, bulgeK = 0.14): void {
+   *  vertex shader works in local space) — the shader does the rest.
+   *
+   *  bulgeK drives the roll's radial "breathing": the crest of the roll
+   *  (w ≈ 0.5, where sin(πw) peaks) shifts radially by ≈ bulgeK·2.2·|d| as
+   *  the cone strokes. Physically the inextensible rubber membrane flattens
+   *  against the flange on the OUTWARD stroke (crest pulls in) and stands
+   *  up/inflates on the INWARD stroke (crest pushes out) — hence the −d sign.
+   *  0.14 made the crest travel only ~31 % of the cone excursion, which read
+   *  as a FROZEN roll (the moving inner wall hides behind the crest from any
+   *  outside view — the "surround doesn't move" report). 0.24 puts the
+   *  visible crest swing at ~53 % of excursion: the roll visibly rolls. */
+  apply(d: number, strength: number, bulgeK = 0.24): void {
     if (!isFinite(d)) d = 0;
     const dLocal = d * this.unitsPerWorld;
     const bulge = -dLocal * bulgeK * clamp01(strength) * 2.2;

@@ -150,14 +150,18 @@ export const DRIVERS: DriverProfile[] = [
     scaleMode: { kind: 'driver-inches', inches: 2 },
     // A 2-inch sealed micro driver is a different physics class: tiny Xmax,
     // high free-air resonance, crossover well above the 10-inch.
+    // Visual floor: at the rated 1.5 mm Xmax the roll's visible breathing is
+    // sub-millimeter and reads as a FROZEN surround (user report) while the
+    // 3 mm default keeps the roll's crest swing clearly visible at the
+    // mini's scale, matching the exaggerated-dyno feel of the 10-inch.
     defaults: {
-      maxExcursionMM: 1.5,
+      maxExcursionMM: 3.0,
       resonanceHz: 70,
       boxLoad: 0.6,
       lfCutoffHz: 120,
       hfCutoffHz: 250,
-      surroundFlexibility: 0.55,
-      surroundStrength: 0.8
+      surroundFlexibility: 0.65,
+      surroundStrength: 1.0
     },
     ranges: {
       maxExcursionMM: { min: 0.5, max: 6, step: 0.1 },

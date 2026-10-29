@@ -247,6 +247,10 @@ async function boot(): Promise<void> {
       Object.assign(params, DEFAULT_PARAMS, profile.defaults);
       const meta = metaFor(profile);
       for (const m of meta) params[m.key] = Math.min(m.max, Math.max(m.min, params[m.key]));
+      // The deformer constructor builds weights with the GENERIC default
+      // flexibility (0.6); re-derive them from the driver profile so a hot-
+      // swapped driver's roll character applies without touching the slider.
+      deformer.rebuildWeights(params.surroundFlexibility);
       if (!paramsPanel) {
         paramsPanel = new ParamsPanel($('params'), params, meta, profile.defaults);
         paramsPanel.onChange = (key, value) => {
@@ -638,7 +642,9 @@ async function boot(): Promise<void> {
       tris: current.audit.parts.reduce((s, p) => s + p.tris, 0)
     }) : ({ parts: 0, verts: 0, tris: 0 }),
     /** Direct mesh access for diagnostics / browser-side verification. */
-    mesh: (index: number) => current ? (current.audit.byIndex.get(index)?.mesh ?? null) : null
+    mesh: (index: number) => current ? (current.audit.byIndex.get(index)?.mesh ?? null) : null,
+    /** Stage access for GPU verification diagnostics (renderer/scene/camera). */
+    stage: () => ctx3d.stage
   };
 
   loadingEl.classList.remove('show');

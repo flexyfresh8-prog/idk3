@@ -136,10 +136,18 @@ export function auditModel(root: THREE.Object3D, profile: DriverProfile): AuditR
     p.rIn = s.rIn; p.rOut = s.rOut;
   });
 
-  // ---- outward direction: the dust cap / cone band sits at the firing side
+  // ---- outward direction: the dust cap / cone band sits at the firing side.
+  // Drivers WITHOUT a separate dust cap (the 2-inch mini's one-piece
+  // diaphragm) previously fell through to the −Z default and fired BACKWARD:
+  // forced outward excursion visibly pushed the mini's cone INTO the cabinet.
+  // Fall back to the cone alone — the moving diaphragm always protrudes on
+  // the firing side of the model center.
   let frontSign = -1;
   if (cap && cone) {
     const probe = (cap.center.z + cone.center.z) / 2 - modelCenter.z;
+    frontSign = probe < 0 ? -1 : 1;
+  } else if (cone) {
+    const probe = cone.center.z - modelCenter.z;
     frontSign = probe < 0 ? -1 : 1;
   }
   const outward = axis.clone().multiplyScalar(frontSign);

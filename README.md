@@ -29,7 +29,7 @@ No uploads, no backend, no accounts: your audio files never leave your device.
   **mesh 2** — user-supplied brief, confirmed by radial/z cross-section audit
   and isolated renders.
 - **Per-driver physics profiles.** A 2-inch sealed micro driver is a different
-  physics class: the mini defaults to Xmax 1.5 mm (slider 0.5–6), Fs 70 Hz
+  physics class: the mini defaults to Xmax 3.0 mm (slider 0.5–6), Fs 70 Hz
   (40–120), sealed-box load 0.6 and a 120 Hz drive crossover. The 10-inch
   keeps the v3 calibration (Xmax 10 mm, Fs 32 Hz). The same GAIN_K excitation
   contract (full-scale sine ≈ 1.75 × Xmax at the boxed resonance) holds for
@@ -39,7 +39,14 @@ No uploads, no backend, no accounts: your audio files never leave your device.
   the deformer now carries an explicit units-per-world factor and the suite
   asserts the converted value. The audit's surround attach-band padding is
   proportional to the surround width (a fixed 4 mm pad would have frozen 65 %
-  of the mini's 13 mm roll).
+  of the mini's 13 mm roll). The roll's radial breathing (crest travel,
+  `bulgeK` 0.24) is tuned so the rubber visibly flattens on the outward
+  stroke and inflates on the inward stroke on BOTH drivers — the visible
+  crest swing is ≈ 53 % of the cone excursion, and the suite asserts the
+  mini's inner edge rides the cone exactly while the outer edge stays
+  anchored. The audit derives the firing direction from the cone alone when
+  a driver ships without a separate dust cap (the mini's one-piece
+  diaphragm previously fired backward).
 - **Cylindrical UV projection — the procedural PBR library finally shows.**
   Both supplied GLBs ship WITHOUT texture coordinates (gltfpack strips them),
   so every albedo/normal map sampled a single texel. The mount now generates

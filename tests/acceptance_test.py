@@ -81,7 +81,7 @@ def run():
         page.evaluate("window.__sim.forceDisplacement(14); window.__simRenderOnce()")
         ds = page.evaluate("window.__sim.deformState()")
         check("GPU deform uniforms driven (uD == -0.014 at forced 14mm)",
-              abs(ds["uD"] + 0.014) < 1e-6 and abs(ds["uBulge"] - 0.014 * 0.14 * 0.8 * 2.2) < 1e-6,
+              abs(ds["uD"] + 0.014) < 1e-6 and abs(ds["uBulge"] - 0.014 * 0.24 * 0.8 * 2.2) < 1e-6,
               f"deformState={ds}")
         buf_out = page.evaluate("window.__sim.mesh(19).geometry.attributes.position.array[2]")
         page.evaluate("window.__sim.forceDisplacement(0); window.__simRenderOnce()")
@@ -249,25 +249,42 @@ def run():
         check("Mini mesh roles verified (2=surround1, 10=cone, 3=voiceCoil)",
               mmap.get(2) == "surround1" and mmap.get(10) == "cone" and mmap.get(3) == "voiceCoil",
               f"2={mmap.get(2)} 10={mmap.get(10)} 3={mmap.get(3)}")
-        # forced-displacement mechanics at the mini's scale
+        # forced-displacement mechanics at the mini's scale.
+        # The mini fires +Z (cone-only outward fallback in the audit), so a
+        # forced POSITIVE excursion moves the cone toward +Z: coneZ INCREASES.
         page.evaluate("window.__sim.forceDisplacement(0); window.__simRenderOnce()")
         mrest = page.evaluate("window.__sim.probe()")
         page.evaluate("window.__sim.forceDisplacement(1.5); window.__simRenderOnce()")
         mout = page.evaluate("window.__sim.probe()")
         md = round(mrest["coneZ"] - mout["coneZ"], 6)
-        check("Mini cone + coil ride 1.5 mm rigidly", abs(md - 0.0015) < 2e-4 and round(mrest["coilZ"] - mout["coilZ"], 6) == md,
+        check("Mini cone + coil ride 1.5 mm rigidly (+Z outward)", abs(md + 0.0015) < 2e-4 and round(mrest["coilZ"] - mout["coilZ"], 6) == md,
               f"coneDelta={md} coilDelta={round(mrest['coilZ']-mout['coilZ'],6)}")
         # GPU uniforms are in LOCAL units on a scaled model: uD must equal
-        # -d/scale (sign follows the outward convention; the mini fires +Z)
+        # +d/scale for a positive forced excursion (mini fires +Z)
         mds = page.evaluate("window.__sim.deformState()")
         mscale = drv["scale"]
         check("Mini GPU deform uniforms scale-corrected",
-              abs(abs(mds["uD"]) - 0.0015 / mscale) < (0.0015 / mscale) * 0.02,
+              abs(mds["uD"] - 0.0015 / mscale) < (0.0015 / mscale) * 0.02,
               f"uD={mds['uD']} expected≈{0.0015/mscale:.4f}")
+        check("Mini roll breathing driven (uBulge ≈ -uD·0.24·1.0·2.2)",
+              abs(mds["uBulge"] + mds["uD"] * 0.24 * 1.0 * 2.2) < abs(mds["uD"]) * 0.02,
+              f"uBulge={mds['uBulge']} uD={mds['uD']}")
+        # REGRESSION GUARD (user report: "the rubber surround just stays there"):
+        # the surround's inner edge must ride the cone exactly (w=1 plateau)
+        # and the outer edge must stay anchored (w=0).
+        sur_inner_mm = round((mrest["sur2MinZ"] - mout["sur2MinZ"]) * mscale * 1000, 3)
+        sur_outer_mm = round((mrest["sur2MaxZ"] - mout["sur2MaxZ"]) * mscale * 1000, 3)
+        check("Mini surround inner edge rides the cone (1.5 mm)", abs(abs(sur_inner_mm) - 1.5) < 0.15,
+              f"inner edge delta={sur_inner_mm} mm")
+        check("Mini surround outer edge anchored", abs(sur_outer_mm) < 0.3,
+              f"outer edge delta={sur_outer_mm} mm")
         mparams = page.evaluate("window.__sim.params")
-        check("Mini profile adopts its own physics ranges (Fs=70, Xmax=1.5)",
-              mparams["resonanceHz"] == 70 and mparams["maxExcursionMM"] == 1.5,
+        check("Mini profile adopts its own physics ranges (Fs=70, Xmax=3.0)",
+              mparams["resonanceHz"] == 70 and mparams["maxExcursionMM"] == 3.0,
               f"Fs={mparams['resonanceHz']} Xmax={mparams['maxExcursionMM']}")
+        check("Mini roll character (flexibility 0.65, strength 1.0)",
+              mparams["surroundFlexibility"] == 0.65 and mparams["surroundStrength"] == 1.0,
+              f"flex={mparams['surroundFlexibility']} strength={mparams['surroundStrength']}")
         # ...and back: the 10-inch must remount cleanly with its params
         page.evaluate("window.__sim.setDriver('fullsize')")
         page.wait_for_function("window.__sim.driver().id === 'fullsize'", timeout=120000)

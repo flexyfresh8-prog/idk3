@@ -1,8 +1,11 @@
 // Runtime model audit: identifies every mesh of the supplied GLB, verifies the
-// mapping against the offline audit, measures world-space geometry (AABBs,
-// radial extents around the driver axis) and exposes it to the UI + tests.
+// mapping against the per-driver component map (drivers.ts), measures
+// world-space geometry (AABBs, radial extents around the driver axis) and
+// exposes it to the UI + tests. Profile-driven: the same audit pipeline
+// serves the 10-inch reference sub and the 2-inch mini sub.
 import * as THREE from 'three';
-import { specFor, EXPECTED_PARTS, type PartSpec } from './types';
+import type { DriverProfile } from './drivers';
+import type { PartSpec } from './types';
 
 export interface AuditedPart {
   index: number;
@@ -63,7 +66,7 @@ function radialStats(mesh: THREE.Mesh, axis: THREE.Vector3, axisPoint: THREE.Vec
   return { rIn: p(0.02), rOut: p(0.98) };
 }
 
-export function auditModel(root: THREE.Object3D): AuditResult {
+export function auditModel(root: THREE.Object3D, profile: DriverProfile): AuditResult {
   const notes: string[] = [];
   const parts: AuditedPart[] = [];
   const byIndex = new Map<number, AuditedPart>();
@@ -78,7 +81,7 @@ export function auditModel(root: THREE.Object3D): AuditResult {
     const m = re.exec(mesh.name) ?? re.exec(mesh.parent?.name ?? '');
     if (!m) { notes.push(`Unrecognized mesh node "${mesh.name}" — treated as motor detail.`); return; }
     const index = parseInt(m[1], 10);
-    const spec = specFor(index);
+    const spec = profile.specFor(index);
     const geo = mesh.geometry;
     const posAttr = geo.getAttribute('position') as THREE.BufferAttribute | undefined;
     const idxAttr = geo.getAttribute('position');
@@ -107,8 +110,10 @@ export function auditModel(root: THREE.Object3D): AuditResult {
   parts.forEach((p) => byIndex.set(p.index, p));
 
   // ---- driver axis: verified Z. Re-derive from data as a sanity check:
-  const cone = byIndex.get(21);
-  const cap = byIndex.get(6);
+  // probe with the cone (falling back to dust cap, then any part) — the cone
+  // is the flattest moving part, its smallest AABB dimension is the axis.
+  const cone = parts.find((p) => p.spec.role === 'cone') ?? null;
+  const cap = parts.find((p) => p.spec.role === 'dustCap') ?? null;
   const frameProbe = cone ?? cap ?? parts[0];
   const sz = frameProbe.size;
   const axisIdx = sz.x < sz.y && sz.x < sz.z ? 'x' : sz.y < sz.z ? 'y' : 'z';
@@ -149,17 +154,22 @@ export function auditModel(root: THREE.Object3D): AuditResult {
   let rInGlobal = Infinity, rOutGlobal = 0;
   surroundParts.forEach((p) => { rInGlobal = Math.min(rInGlobal, p.rIn); rOutGlobal = Math.max(rOutGlobal, p.rOut); });
   // The inner plateau must cover EVERY part's inner edge (the deepest attach
-  // radius across the three arcs), so all surround parts follow the cone with
+  // radius across the arcs), so all surround parts follow the cone with
   // w=1 — no detachment at any junction regardless of arc layering.
+  // The padding is PROPORTIONAL to the surround width: a fixed 4 mm made
+  // sense for the 10-inch (200 mm surround band) but would freeze ~65 % of
+  // a 2-inch mini's 13 mm band. 6 % of the band width, floor 0.5 mm.
   const maxInner = Math.max(...surroundParts.map((p) => p.rIn));
-  rInGlobal = Math.max(rInGlobal, maxInner + 0.004);
+  const bandPad = Math.max(0.0005, (rOutGlobal - Math.min(rInGlobal, maxInner)) * 0.06);
+  rInGlobal = Math.max(rInGlobal, maxInner + bandPad);
   const coneRimRadius = cone ? cone.rOut : rInGlobal;
 
   // ---- mapping verification notes
   const missing: number[] = [];
-  EXPECTED_PARTS.forEach((i) => { if (!byIndex.has(i)) missing.push(i); });
+  profile.expectedParts.forEach((i) => { if (!byIndex.has(i)) missing.push(i); });
   if (missing.length) notes.push(`Expected parts not found in GLB: ${missing.join(', ')}`);
-  if (byIndex.has(7)) notes.push('Verified: Mesh 7 = flange quadrant with mounting holes → kept stationary (brief expected a cone).');
+  const unknownRoles = parts.filter((p) => !p.spec || p.spec.group == null);
+  if (unknownRoles.length) notes.push(`${unknownRoles.length} parts have no role spec — treated as motor detail.`);
   notes.push(`Verified: surround = meshes ${surroundParts.map((p) => p.index).join(', ')}; moving diaphragm = ${movingParts.map((p) => p.index).join(', ')}.`);
   notes.push(`Driver axis = ${axisIdx.toUpperCase()}, firing toward ${frontSign < 0 ? '−' : '+'}${axisIdx.toUpperCase()}.`);
 

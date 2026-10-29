@@ -26,6 +26,11 @@
       <span class="brand-sub">subwoofer dyno lab</span>
     </div>
 
+    <div class="mode-switch" role="tablist" aria-label="Driver">
+      <span class="mode-switch-label">Driver</span>
+      <span id="driver-switch" class="driver-switch-inner"></span>
+    </div>
+
     <div class="mode-switch" role="tablist" aria-label="View mode">
       <button id="mode-full" class="mode-btn active" role="tab" aria-selected="true"><span class="lbl-long">Complete subwoofer</span><span class="lbl-short">Full</span></button>
       <button id="mode-driver" class="mode-btn" role="tab" aria-selected="false"><span class="lbl-long">Driver only</span><span class="lbl-short">Driver</span></button>
@@ -52,6 +57,7 @@
   <main id="layout">
     <aside id="left-panel" class="panel">
       <div class="panel-scroll">
+        <div id="driver-info" class="driver-info"></div>
         <h2 class="panel-title">Components <span class="panel-sub">verified GLB mapping</span></h2>
         <nav id="component-list" aria-label="Component inspector"></nav>
         <div id="part-card" class="part-card"></div>
@@ -94,8 +100,9 @@
         <p class="disclaimer">
           Simulated visualization for education and fun. Excursion values are user-defined
           simulation parameters — this tool does not compute Thiele/Small parameters,
-          real force or measured physical Xmax. Scale calibrated from the GLB
-          (flange ≈ 1.10 m — the art model is oversized).
+          real force or measured physical Xmax. The 10-inch model is oversized art
+          (flange ≈ 1.10 m); the 2-inch mini is auto-scaled so its surround outer
+          diameter measures exactly 2.00″.
         </p>
       </div>
     </aside>

@@ -1,26 +1,5 @@
-// Central types + the VERIFIED component map for tripo_model_1793179198729.glb.
-//
-// The mapping below was established by an offline audit of the GLB
-// (JSON chunk + decoded EXT_meshopt_compression buffers) and confirmed
-// visually by rendering each candidate part in isolation:
-//
-//   part 4 / 15 / 19 : three arc segments that together form the complete
-//                      360-degree rubber surround torus (front face, z -0.46..-0.33)
-//   part 21          : full annulus ring around the dust cap = main visible cone body
-//   part 6           : center dust cap (carries embossed text), part of moving diaphragm
-//   part 1           : large cylindrical voice-coil band behind the cone (z -0.31..-0.15)
-//   part 5/7/8/22    : the four quadrants of the outer mounting FLANGE (with screw
-//                      holes). NOTE: the user brief listed "Mesh 7" as the cone, but
-//                      geometry + renders prove it is a flange quadrant, so it stays
-//                      stationary and is listed as frame.
-//   part 14          : thin outer lip ring where surround meets the flange
-//   part 9/10/20     : cast basket legs
-//   part 11/12/13/16/17/18/23/24..47 : spider, motor, terminals, pole details
-//   part 0/2/3       : big sealed enclosure drum at the back (+z) — hidden in
-//                      driver-only view
-//
-// Driver axis = Z; the driver fires toward NEGATIVE Z (verified: surround and
-// cone occupy the most-negative z band; enclosure drum the most-positive).
+// Central types shared by every driver profile. The per-model VERIFIED
+// component maps live in drivers.ts (one specFor per GLB).
 
 export type Role =
   | 'surround1' | 'surround2' | 'surround3'
@@ -40,46 +19,11 @@ export interface PartSpec {
   note?: string;
 }
 
-const range = (a: number, b: number): number[] => {
+export const range = (a: number, b: number): number[] => {
   const out: number[] = [];
   for (let i = a; i <= b; i++) out.push(i);
   return out;
 };
-
-function specFor(index: number): PartSpec {
-  switch (index) {
-    case 19: return { role: 'surround1', label: 'Rubber Surround — Part 1', meshLabel: 'Mesh 19', group: 'surround', material: 'rubber' };
-    case 15: return { role: 'surround2', label: 'Rubber Surround — Part 2', meshLabel: 'Mesh 15', group: 'surround', material: 'rubber' };
-    case 4:  return { role: 'surround3', label: 'Rubber Surround — Part 3', meshLabel: 'Mesh 4', group: 'surround', material: 'rubber' };
-    case 21: return { role: 'cone', label: 'Cone', meshLabel: 'Mesh 21', group: 'moving', material: 'cone' };
-    case 6:  return { role: 'dustCap', label: 'Dust Cap', meshLabel: 'Mesh 6', group: 'moving', material: 'cap',
-      note: 'Found by audit — center of the moving diaphragm (user brief did not list it).' };
-    case 1:  return { role: 'voiceCoil', label: 'Voice Coil', meshLabel: 'Mesh 1', group: 'moving', material: 'coil' };
-    case 7:  return { role: 'frame', label: 'Frame Flange Quadrant', meshLabel: 'Mesh 7', group: 'frame', material: 'metal',
-      note: 'Listed as "cone" in the brief, but geometry shows screw holes: it is a stationary flange quadrant. Not animated — per the never-animate-wrong-parts rule.' };
-    case 5:  return { role: 'frame', label: 'Frame Flange Quadrant', meshLabel: 'Mesh 5', group: 'frame', material: 'metal' };
-    case 8:  return { role: 'frame', label: 'Frame Flange Quadrant', meshLabel: 'Mesh 8', group: 'frame', material: 'metal' };
-    case 22: return { role: 'frame', label: 'Frame Flange Quadrant', meshLabel: 'Mesh 22', group: 'frame', material: 'metal' };
-    case 14: return { role: 'frame', label: 'Outer Lip Ring', meshLabel: 'Mesh 14', group: 'frame', material: 'metal' };
-    case 9:  return { role: 'basket', label: 'Basket Leg', meshLabel: 'Mesh 9', group: 'frame', material: 'metal' };
-    case 10: return { role: 'basket', label: 'Basket Leg', meshLabel: 'Mesh 10', group: 'frame', material: 'metal' };
-    case 20: return { role: 'basket', label: 'Basket Leg', meshLabel: 'Mesh 20', group: 'frame', material: 'metal' };
-    case 0:  return { role: 'enclosure', label: 'Enclosure Drum', meshLabel: 'Mesh 0', group: 'enclosure', material: 'box' };
-    case 2:  return { role: 'enclosure', label: 'Enclosure Drum Section', meshLabel: 'Mesh 2', group: 'enclosure', material: 'box' };
-    case 3:  return { role: 'enclosure', label: 'Enclosure Adapter Ring', meshLabel: 'Mesh 3', group: 'enclosure', material: 'box' };
-    default:
-      if (range(11, 13).includes(index) || range(16, 18).includes(index) || range(23, 47).includes(index)) {
-        return { role: 'motor', label: 'Motor / Suspension Detail', meshLabel: `Mesh ${index}`, group: 'motor', material: 'steel' };
-      }
-      return { role: 'motor', label: 'Detail Part', meshLabel: `Mesh ${index}`, group: 'motor', material: 'steel' };
-  }
-}
-
-export const EXPECTED_PARTS = new Set<number>(
-  [19, 15, 4, 21, 6, 1, 5, 7, 8, 22, 14, 9, 10, 20, 0, 2, 3, ...range(11, 13), ...range(16, 18), ...range(23, 47)]
-);
-
-export { specFor };
 
 // ------------------------------------------------------------------ params
 

@@ -101,6 +101,23 @@ button:focus-visible, input:focus-visible {
 }
 .mode-btn:not(.active):hover { color: var(--text); }
 
+/* driver switcher (header) + info chip (left panel) */
+.mode-switch-label {
+  align-self: center; padding: 0 4px 0 8px;
+  color: var(--muted); font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.22em; text-transform: uppercase;
+}
+.driver-switch-inner { display: flex; gap: 2px; }
+.mode-btn:disabled { opacity: 0.55; cursor: wait; }
+
+.driver-info {
+  border: 1px solid var(--line-soft); border-radius: var(--radius);
+  background: rgba(9, 9, 13, 0.55);
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.driver-name { font-weight: 800; font-size: 13px; color: var(--text); }
+.driver-tag { color: var(--muted); font-size: 11px; line-height: 1.55; margin-top: 3px; }
+
 .top-actions { margin-left: auto; display: flex; gap: 8px; }
 
 /* ---------------------------------------------------------------- buttons */
@@ -453,6 +470,7 @@ input[type="range"]::-moz-range-track {
   #topbar { min-height: 50px; gap: 5px 8px; padding: 4px 8px; }
   .top-actions { gap: 5px; }
   .mode-btn { padding: 6px 9px; font-size: 11.5px; }
+  .mode-switch-label { display: none; }   /* second switch group: drop its caption on mobile */
 }
 
 @media (max-width: 400px) {

@@ -2,14 +2,57 @@
 
 A realistic, audio-reactive 3D subwoofer simulator that runs entirely in your
 browser. Import any MP3 from your device and watch the **actual components of
-the supplied GLB model** — the cone, the three-part rubber surround and the
-voice coil — move like a real driver.
+the supplied GLB model** — the cone, the rubber surround and the voice coil —
+move like a real driver.
 
 **Live:** https://flexyfresh8-prog.github.io/idk3/
 
 No uploads, no backend, no accounts: your audio files never leave your device.
 
-![stack](https://img.shields.io/badge/Vite-TypeScript-blue) ![three](https://img.shields.io/badge/Three.js-WebGL-orange)
+![stack](https://img.shields.io/badge/Vite-TypeScript-blue) ![three](https://img.shields.io/badge/Three.js-WebGL-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+
+---
+
+## v4 — multi-driver dyno lab (hot-swappable profiles)
+
+- **Two drivers, one lab.** The header **Driver** switch hot-swaps between the
+  10-inch reference sub (48-part art model) and a new **2-inch mini sub**
+  (31-part sealed micro sub, user-supplied GLB). Switching keeps the audio
+  playing, flies the camera to the new framing, rebuilds the component
+  inspector, and adopts the driver's own physics profile. The choice is
+  written back to the URL (`?driver=mini2`) so a view is shareable.
+- **The mini sub is auto-scaled to its rating, never hardcoded.** The mount
+  pipeline audits the GLB, measures the surround outer diameter, and solves
+  the uniform scale so the driver measures **exactly 2.00″** (verified by the
+  acceptance suite). Verified mesh roles: voice coil = **mesh 3**, cone =
+  **mesh 10** (one-piece diaphragm with embossed logo), rubber surround =
+  **mesh 2** — user-supplied brief, confirmed by radial/z cross-section audit
+  and isolated renders.
+- **Per-driver physics profiles.** A 2-inch sealed micro driver is a different
+  physics class: the mini defaults to Xmax 1.5 mm (slider 0.5–6), Fs 70 Hz
+  (40–120), sealed-box load 0.6 and a 120 Hz drive crossover. The 10-inch
+  keeps the v3 calibration (Xmax 10 mm, Fs 32 Hz). The same GAIN_K excitation
+  contract (full-scale sine ≈ 1.75 × Xmax at the boxed resonance) holds for
+  both — the RK4 model is self-similar across the slider ranges.
+- **Scale-correct GPU deformation.** The surround shader works in the model's
+  local units, so a scaled model needs the excursion converted (uD = d/scale);
+  the deformer now carries an explicit units-per-world factor and the suite
+  asserts the converted value. The audit's surround attach-band padding is
+  proportional to the surround width (a fixed 4 mm pad would have frozen 65 %
+  of the mini's 13 mm roll).
+- **Cylindrical UV projection — the procedural PBR library finally shows.**
+  Both supplied GLBs ship WITHOUT texture coordinates (gltfpack strips them),
+  so every albedo/normal map sampled a single texel. The mount now generates
+  cylindrical UVs around the driver axis (every speaker part is a body of
+  revolution): integer wrap count so the seam lands on a tile boundary, and
+  world-space density so the weave, brushed-metal and carpet detail read
+  consistently on both drivers.
+- **Project hygiene to match the engineering.** MIT LICENSE added, portable
+  Chrome detection in the test suite, and the acceptance suite grew to
+  **32/33 checks** — including a mini-driver section (mount, measured size,
+  mesh roles, rigid cone+coil travel at the mini's scale, scale-corrected GPU
+  uniforms, profile adoption, round-trip back to the 10-inch). The only
+  non-passing check remains the documented headless media-element silence.
 
 ---
 
@@ -123,9 +166,13 @@ No uploads, no backend, no accounts: your audio files never leave your device.
 
 ## Features
 
-- **Real model, real parts** — the simulator loads `public/models/tripo_model_1793179198729.glb`
-  (EXT_meshopt_compressed, decoded at runtime with `MeshoptDecoder`) and maps
-  every mesh to a mechanical role. 48 parts, 981,208 vertices, 1.92 M triangles.
+- **Two hot-swappable drivers** — the header Driver switch swaps between the
+  10-inch reference sub and the 2-inch mini sub live (audio keeps playing,
+  camera re-frames, per-driver physics profiles, shareable `?driver=` URL).
+- **Real model, real parts** — every mesh of each supplied GLB is mapped to a
+  mechanical role by the profile-driven audit (`src/core/drivers.ts`). The
+  10-inch: 48 parts, 981,208 vertices, 1.92 M triangles. The mini: 31 parts,
+  auto-scaled so the driver measures 2.00″.
 - **Audio-reactive physics** — a Web Audio graph extracts the *actual
   low-frequency content* of your music (cascaded 24 dB/oct low-pass tap), an
   AGC normalizes any track, a transient "punch" envelope adds kick, and a
@@ -176,7 +223,9 @@ No uploads, no backend, no accounts: your audio files never leave your device.
 The mapping below was established by an offline audit of the GLB (JSON chunk +
 decoded meshopt buffers), confirmed programmatically at runtime and visually by
 rendering each part in isolation. Node names in this file are `tripo_part_N`,
-and node index == mesh index (verified — never assumed).
+and node index == mesh index (verified — never assumed). The 2-inch mini sub
+has its own verified map (surround 2 · cone 10 · voice coil 3) in
+[`src/core/drivers.ts`](src/core/drivers.ts).
 
 | Component | Mesh | Role in simulation |
 |---|---|---|
@@ -285,12 +334,14 @@ npm run preview    # serves the production build locally
 ```
 
 Automated acceptance tests live in [`tests/acceptance_test.py`](tests/acceptance_test.py) (Playwright;
-they drive `window.__sim`): 25/26 checks pass in CI-like headless mode — the
+they drive `window.__sim`): 32/33 checks pass in CI-like headless mode — the
 only failing check is media-element audio output, which requires a real audio
 device (verified instead through the Web Audio oscillator path). The suite
 includes regression guards for the excursion contract (test tone must max out
 the suspension at ≈ 1.2+ Xmax), the GPU deform path (uniforms driven, CPU
-buffers at rest) and the removed motion-smoothing option.
+buffers at rest, scale-corrected on the mini) and the v4 multi-driver
+hot-swap (mount, measured 2.00″, mesh roles, rigid travel, profile adoption,
+round-trip).
 [`tests/physics_validate.py`](tests/physics_validate.py) replicates the RK4
 model offline and re-solves the drive-gain constant by bisection.
 
@@ -310,17 +361,23 @@ select **GitHub Actions** once; everything after that is automatic.
 ```
 ├── .github/workflows/deploy.yml   # build + Pages deployment
 ├── index.html                     # app shell (panels, transport, overlays)
-├── public/models/*.glb            # the supplied subwoofer model (as uploaded)
+├── public/models/*.glb            # the supplied subwoofer models (as uploaded)
 └── src
-    ├── main.ts                    # boot, audit wiring, render loop
+    ├── main.ts                    # boot, driver hot-swap, audit wiring, render loop
     ├── style.css                  # responsive dark studio UI
     ├── core
-    │   ├── types.ts               # verified component map + sim params
+    │   ├── types.ts               # roles, materials, sim params + base ranges
+    │   ├── drivers.ts             # per-driver profiles: verified maps, scale, physics
     │   ├── gltfAudit.ts           # runtime model audit / axis derivation
+    │   ├── uv.ts                  # cylindrical UV projection (both GLBs ship without UVs)
     │   ├── assembly.ts            # rigid moving group (cone + cap + coil)
-    │   ├── surroundDeform.ts      # 3-part rubber deformation field
-    │   └── physics.ts             # damped mass-spring excursion model
+    │   ├── surroundDeform.ts      # GPU rubber deformation field (scale-aware)
+    │   └── physics.ts             # coupled electro-mechanical RK4 excursion model
     ├── audio/audioEngine.ts       # Web Audio graph + DSP + test tone
     ├── scene/{stage,materials}.ts # renderer/lights/orbit + PBR sets
     └── ui/{inspector,paramsPanel,playerUI}.ts
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

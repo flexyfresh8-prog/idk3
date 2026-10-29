@@ -12,10 +12,14 @@ export class Stage {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
   readonly keyLight: THREE.DirectionalLight;
-  private ground: THREE.Mesh;
   private defaultCamPos = new THREE.Vector3();
   private defaultTarget = new THREE.Vector3();
   private camAnim: { from: THREE.Vector3; to: THREE.Vector3; tFrom: THREE.Vector3; tTo: THREE.Vector3; t: number } | null = null;
+  // driver hot-swap support: radius-dependent dressing is rebuilt on reframe
+  private dressing: THREE.Object3D[] = [];
+  private rims: THREE.DirectionalLight[] = [];
+  private ground!: THREE.Mesh;
+
 
   readonly lite: boolean;
 
@@ -54,23 +58,12 @@ export class Stage {
     this.renderer.domElement.id = 'gl-canvas';
 
     this.scene.background = new THREE.Color('#0a0b0f');
-    this.scene.fog = new THREE.Fog('#0a0b0f', modelRadius * 5, modelRadius * 14);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.01, 60);
-    this.defaultTarget.copy(modelCenter);
-    this.defaultCamPos.set(
-      modelCenter.x + modelRadius * 1.35,
-      modelCenter.y + modelRadius * 0.95,
-      modelCenter.z - modelRadius * 1.9
-    );
-    this.camera.position.copy(this.defaultCamPos);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.target.copy(this.defaultTarget);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = modelRadius * 0.35;
-    this.controls.maxDistance = modelRadius * 8;
     this.controls.maxPolarAngle = Math.PI * 0.96;
     this.controls.zoomSpeed = 0.9;
     this.controls.panSpeed = 0.85;
@@ -82,18 +75,12 @@ export class Stage {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
       this.scene.environmentIntensity = 0.55;
-      this.addBackdrop(modelCenter, modelRadius);
     }
 
     // key light — warm white, throws the main shadow
     const key = new THREE.DirectionalLight('#fff3e2', 2.7);
-    key.position.set(modelRadius * 1.6, modelRadius * 2.2, modelRadius * -2.4);
     key.castShadow = !lite;
     key.shadow.mapSize.set(1024, 1024);
-    const d = modelRadius * 1.4;
-    key.shadow.camera.left = -d; key.shadow.camera.right = d;
-    key.shadow.camera.top = d; key.shadow.camera.bottom = -d;
-    key.shadow.camera.near = 0.05; key.shadow.camera.far = modelRadius * 8;
     key.shadow.bias = -0.0004;
     key.shadow.radius = 4;
     this.scene.add(key);
@@ -101,18 +88,70 @@ export class Stage {
 
     // theme rims — amber lamp from behind-left, steel-blue fill from behind-right
     const rim = new THREE.DirectionalLight('#ffb454', 1.45);
-    rim.position.set(modelRadius * -2.2, modelRadius * 1.1, modelRadius * 2.0);
     this.scene.add(rim);
-
     const rim2 = new THREE.DirectionalLight('#5f7cff', 0.7);
-    rim2.position.set(modelRadius * 2.1, modelRadius * -0.4, modelRadius * 1.8);
     this.scene.add(rim2);
+    this.rims = [rim, rim2];
 
     const amb = new THREE.HemisphereLight('#454038', '#0d0d10', 0.85);
     this.scene.add(amb);
 
-    // display platform + faint polar grid under the driver
+    this.applyFraming(modelCenter, modelRadius, /* first */ true);
+
+    new ResizeObserver(() => this.resize()).observe(container);
+    this.resize();
+
+    // any camera interaction wakes the renderer out of its idle throttle
+    const wake = () => { this.idleTime = 0; };
+    this.renderer.domElement.addEventListener('pointerdown', wake);
+    this.renderer.domElement.addEventListener('wheel', wake, { passive: true });
+    this.renderer.domElement.addEventListener('touchstart', wake, { passive: true });
+    this.controls.addEventListener('start', wake);
+  }
+
+  /**
+   * Apply model framing: camera defaults, control distance limits, fog,
+   * light rig placement and the studio dressing (platform/grid/ground/
+   * backdrop). Called once by the constructor and again by reframe() when
+   * the driver is hot-swapped for a differently-sized model.
+   */
+  private applyFraming(modelCenter: THREE.Vector3, modelRadius: number, first: boolean): void {
+
+
+    this.scene.fog = new THREE.Fog('#0a0b0f', modelRadius * 5, modelRadius * 14);
+
+    this.defaultTarget.copy(modelCenter);
+    this.defaultCamPos.set(
+      modelCenter.x + modelRadius * 1.35,
+      modelCenter.y + modelRadius * 0.95,
+      modelCenter.z - modelRadius * 1.9
+    );
+    if (first) this.camera.position.copy(this.defaultCamPos);
+    // clip planes track the model scale (a 2-inch mini needs a much nearer
+    // near-plane than the 10-inch to avoid z-fighting)
+    this.camera.near = Math.min(0.01, Math.max(0.0008, modelRadius / 60));
+    this.camera.far = Math.max(20, modelRadius * 60);
+    this.camera.updateProjectionMatrix();
+
+    this.controls.minDistance = modelRadius * 0.35;
+    this.controls.maxDistance = modelRadius * 8;
+
+    this.keyLight.position.set(modelRadius * 1.6, modelRadius * 2.2, modelRadius * -2.4);
+    const d = modelRadius * 1.4;
+    const sc = this.keyLight.shadow.camera;
+    sc.left = -d; sc.right = d; sc.top = d; sc.bottom = -d;
+    sc.near = Math.max(0.01, modelRadius * 0.1); sc.far = modelRadius * 8;
+    sc.updateProjectionMatrix();
+    if (this.rims[0]) this.rims[0].position.set(modelRadius * -2.2, modelRadius * 1.1, modelRadius * 2.0);
+    if (this.rims[1]) this.rims[1].position.set(modelRadius * 2.1, modelRadius * -0.4, modelRadius * 1.8);
+
+    // rebuild the radius-dependent dressing
+    this.disposeDressing();
+    const lite = this.lite;
     const groundY = modelCenter.y - modelRadius * 0.92;
+
+    if (!lite) this.addBackdrop(modelCenter, modelRadius);
+
     const platform = new THREE.Mesh(
       new THREE.CylinderGeometry(modelRadius * 1.55, modelRadius * 1.7, modelRadius * 0.07, 72),
       new THREE.MeshStandardMaterial({ color: '#141318', roughness: 0.38, metalness: 0.66 })
@@ -136,15 +175,31 @@ export class Stage {
     this.ground.receiveShadow = true;
     this.scene.add(this.ground);
 
-    new ResizeObserver(() => this.resize()).observe(container);
-    this.resize();
+    this.dressing = [platform, grid, this.ground];
+  }
 
-    // any camera interaction wakes the renderer out of its idle throttle
-    const wake = () => { this.idleTime = 0; };
-    this.renderer.domElement.addEventListener('pointerdown', wake);
-    this.renderer.domElement.addEventListener('wheel', wake, { passive: true });
-    this.renderer.domElement.addEventListener('touchstart', wake, { passive: true });
-    this.controls.addEventListener('start', wake);
+  private disposeDressing(): void {
+    for (const o of this.dressing) {
+      this.scene.remove(o);
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose()); else mat?.dispose();
+    }
+    this.dressing = [];
+  }
+
+  /** Hot-swap framing for a new driver (camera flies to the new model). */
+  reframe(modelCenter: THREE.Vector3, modelRadius: number): void {
+    this.applyFraming(modelCenter, modelRadius, /* first */ false);
+    this.resetCamera();
+  }
+
+  /** True while the camera is animating to a new framing (driver swap) —
+   *  the render loop treats it as motion so idle-skipping never freezes
+   *  the flight mid-transition. */
+  camAnimActive(): boolean {
+    return this.camAnim !== null;
   }
 
   /** Giant inverted sphere with a vertical gradient — the studio cyclorama. */

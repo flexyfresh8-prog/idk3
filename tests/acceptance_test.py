@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Full acceptance test suite for the idk3 subwoofer simulator.
 Runs against the vite dev server (or preview) using Playwright + the
-agent-browser Chrome build. Verifies every mechanical + audio criterion."""
+agent-browser Chrome build. Verifies every mechanical + audio criterion,
+plus the v4 multi-driver hot-swap (10-inch reference sub <-> 2-inch mini)."""
 import json, sys, time
 from playwright.sync_api import sync_playwright
 
@@ -15,7 +16,9 @@ def check(name, ok, detail=""):
 def find_chrome():
     import glob, os
     for pat in ("/home/z/.agent-browser/browsers/chrome-*/chrome",
-                os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome")):
+                os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome"),
+                os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome"),
+                os.path.expanduser("~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell")):
         hits = sorted(glob.glob(pat))
         if hits:
             return hits[-1]
@@ -228,6 +231,52 @@ def run():
         }""")
         check("No-UI mode: Esc restores the full lab UI", restored, f"restored={restored}")
         page2.close()
+
+        # 12e. multi-driver hot-swap: 2-inch mini sub (v4).
+        # The user-supplied mini GLB maps: voice coil = mesh 3, cone = mesh 10,
+        # rubber surround = mesh 2 (verified geometrically + visually). The
+        # model auto-scales so the surround outer diameter measures 2.00 in.
+        page.evaluate("window.__sim.setDriver('mini2')")
+        page.wait_for_function("window.__sim.driver().id === 'mini2'", timeout=120000)
+        time.sleep(1.0)
+        drv = page.evaluate("window.__sim.driver()")
+        check("Mini driver mounts (31 parts, surround [2], moving [3, 10])",
+              drv["parts"] == 31 and drv["surround"] == [2] and sorted(drv["moving"]) == [3, 10],
+              json.dumps(drv))
+        check("Mini driver auto-scaled to 2.00 in", abs(drv["measuredDriverInches"] - 2.0) < 0.05,
+              f"measured={drv['measuredDriverInches']} scale={round(drv['scale'], 4)}")
+        mmap = {m["index"]: m["role"] for m in page.evaluate("window.__sim.mapping()")}
+        check("Mini mesh roles verified (2=surround1, 10=cone, 3=voiceCoil)",
+              mmap.get(2) == "surround1" and mmap.get(10) == "cone" and mmap.get(3) == "voiceCoil",
+              f"2={mmap.get(2)} 10={mmap.get(10)} 3={mmap.get(3)}")
+        # forced-displacement mechanics at the mini's scale
+        page.evaluate("window.__sim.forceDisplacement(0); window.__simRenderOnce()")
+        mrest = page.evaluate("window.__sim.probe()")
+        page.evaluate("window.__sim.forceDisplacement(1.5); window.__simRenderOnce()")
+        mout = page.evaluate("window.__sim.probe()")
+        md = round(mrest["coneZ"] - mout["coneZ"], 6)
+        check("Mini cone + coil ride 1.5 mm rigidly", abs(md - 0.0015) < 2e-4 and round(mrest["coilZ"] - mout["coilZ"], 6) == md,
+              f"coneDelta={md} coilDelta={round(mrest['coilZ']-mout['coilZ'],6)}")
+        # GPU uniforms are in LOCAL units on a scaled model: uD must equal
+        # -d/scale (sign follows the outward convention; the mini fires +Z)
+        mds = page.evaluate("window.__sim.deformState()")
+        mscale = drv["scale"]
+        check("Mini GPU deform uniforms scale-corrected",
+              abs(abs(mds["uD"]) - 0.0015 / mscale) < (0.0015 / mscale) * 0.02,
+              f"uD={mds['uD']} expected≈{0.0015/mscale:.4f}")
+        mparams = page.evaluate("window.__sim.params")
+        check("Mini profile adopts its own physics ranges (Fs=70, Xmax=1.5)",
+              mparams["resonanceHz"] == 70 and mparams["maxExcursionMM"] == 1.5,
+              f"Fs={mparams['resonanceHz']} Xmax={mparams['maxExcursionMM']}")
+        # ...and back: the 10-inch must remount cleanly with its params
+        page.evaluate("window.__sim.setDriver('fullsize')")
+        page.wait_for_function("window.__sim.driver().id === 'fullsize'", timeout=120000)
+        time.sleep(1.0)
+        rstats = page.evaluate("window.__sim.stats()")
+        rparams = page.evaluate("window.__sim.params")
+        check("Round-trip back to the 10-inch (48 parts, default params)",
+              rstats["parts"] == 48 and rparams["resonanceHz"] == 32 and rparams["maxExcursionMM"] == 10,
+              f"parts={rstats['parts']} Fs={rparams['resonanceHz']} Xmax={rparams['maxExcursionMM']}")
 
         # 13-15. viewport / touch sizing sanity + no page errors
         check("No runtime page errors", len(errors) == 0, "; ".join(errors[:3]) if errors else "clean")

@@ -110,7 +110,13 @@ export class SurroundDeformer {
   }
 
   constructor(parts: AuditedPart[], private axis: THREE.Vector3, private axisPoint: THREE.Vector3,
-              private rIn: number, private rOut: number) {
+              private rIn: number, private rOut: number,
+              /** local units per world unit (1 / model root scale). The shader
+               *  displaces LOCAL coordinates, but the excursion d arrives in
+               *  WORLD units — when the driver model is uniformly scaled (the
+               *  2-inch mini is scaled to its 2" rating) the uniform must be
+               *  converted or the surround would travel 1/scale × too far. */
+              private unitsPerWorld = 1) {
     for (const p of parts) this.addPart(p);
     this.rebuildWeights();
   }
@@ -311,14 +317,16 @@ export class SurroundDeformer {
   }
 
   /** Apply axial excursion d (world units, signed along `axis`) + bulge.
-   *  GPU path: this only writes uniforms — the vertex shader does the rest. */
+   *  GPU path: this only writes uniforms (converted to LOCAL units — the
+   *  vertex shader works in local space) — the shader does the rest. */
   apply(d: number, strength: number, bulgeK = 0.14): void {
     if (!isFinite(d)) d = 0;
-    const bulge = -d * bulgeK * clamp01(strength) * 2.2;
-    if (d === this.lastD && bulge === this.lastBulge) return;
-    this.lastD = d;
+    const dLocal = d * this.unitsPerWorld;
+    const bulge = -dLocal * bulgeK * clamp01(strength) * 2.2;
+    if (dLocal === this.lastD && bulge === this.lastBulge) return;
+    this.lastD = dLocal;
     this.lastBulge = bulge;
-    this.sharedU.uD.value = d;
+    this.sharedU.uD.value = dLocal;
     this.sharedU.uBulge.value = bulge;
   }
 

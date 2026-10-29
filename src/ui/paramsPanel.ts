@@ -1,22 +1,35 @@
-// Simulation parameter panel: builds sliders from PARAM_META, applies every
-// change instantly to the running simulation (no page reload), validates
-// ranges and cross-field constraints (hfCutoff >= lfCutoff + 40 Hz).
-import { PARAM_META, DEFAULT_PARAMS, type SimParams, type ParamMeta } from '../core/types';
+// Simulation parameter panel: builds sliders from a ParamMeta list (per-driver
+// ranges), applies every change instantly to the running simulation (no page
+// reload), validates ranges and cross-field constraints (hfCutoff >= lfCutoff
+// + 40 Hz). Rebuilt live when the driver profile changes (a 2-inch mini has
+// different excursion/resonance ranges than the 10-inch).
+import { type SimParams, type ParamMeta } from '../core/types';
 import { paintRange } from './paintRange';
 
 export class ParamsPanel {
   private inputs = new Map<keyof SimParams, HTMLInputElement>();
   private bubbles = new Map<keyof SimParams, HTMLSpanElement>();
+  private meta: ParamMeta[] = [];
+  private defaults!: Partial<SimParams>;
   onChange: (key: keyof SimParams, value: number) => void = () => {};
   onReset: () => void = () => {};
 
-  constructor(private container: HTMLElement, private params: SimParams) {
-    this.build();
+  constructor(private container: HTMLElement, private params: SimParams, meta: ParamMeta[], defaults: Partial<SimParams>) {
+    this.build(meta, defaults);
   }
 
-  private build(): void {
+  /** Swap the slider set + defaults for a new driver profile and repaint. */
+  rebuild(meta: ParamMeta[], defaults: Partial<SimParams>): void {
+    this.build(meta, defaults);
+  }
+
+  private build(meta: ParamMeta[], defaults: Partial<SimParams>): void {
+    this.meta = meta;
+    this.defaults = defaults;
     this.container.innerHTML = '';
-    for (const meta of PARAM_META) this.addSlider(meta);
+    this.inputs.clear();
+    this.bubbles.clear();
+    for (const m of meta) this.addSlider(m);
     const resetBtn = document.createElement('button');
     resetBtn.className = 'btn ghost full-width';
     resetBtn.id = 'reset-sim';
@@ -85,15 +98,17 @@ export class ParamsPanel {
   }
 
   private syncBubble(key: keyof SimParams): void {
-    const meta = PARAM_META.find((m) => m.key === key)!;
-    const bubble = this.bubbles.get(key)!;
-    const v = this.params[key];
-    bubble.textContent = `${meta.unit === '×' ? '' : ''}${round(v, meta.step)}${meta.unit ? (meta.unit === '×' ? '×' : ' ' + meta.unit) : ''}`;
+    const meta = this.meta.find((m) => m.key === key);
+    if (!meta) return;
+    const bubble = this.bubbles.get(key);
+    if (!bubble) return;
+    bubble.textContent = `${round(this.params[key], meta.step)}${meta.unit ? (meta.unit === '×' ? '×' : ' ' + meta.unit) : ''}`;
   }
 
   syncAll(): void {
-    for (const meta of PARAM_META) {
-      const input = this.inputs.get(meta.key)!;
+    for (const meta of this.meta) {
+      const input = this.inputs.get(meta.key);
+      if (!input) continue;
       input.value = String(this.params[meta.key]);
       paintRange(input);
       this.syncBubble(meta.key);
@@ -101,10 +116,32 @@ export class ParamsPanel {
   }
 
   resetToDefaults(): void {
-    Object.assign(this.params, DEFAULT_PARAMS);
+    Object.assign(this.params, DEFAULTS_BASE, this.defaults);
+    // clamp into the active ranges (a default from another driver may sit
+    // outside the current slider range)
+    for (const meta of this.meta) {
+      const v = this.params[meta.key];
+      this.params[meta.key] = Math.min(meta.max, Math.max(meta.min, v));
+    }
     this.syncAll();
   }
 }
+
+// the v3 baseline every profile overrides from
+const DEFAULTS_BASE: Partial<SimParams> = {
+  maxExcursionMM: 10,
+  resonanceHz: 32,
+  coneMass: 1.0,
+  boxLoad: 0.35,
+  bassSensitivity: 1.0,
+  lfCutoffHz: 80,
+  hfCutoffHz: 200,
+  surroundFlexibility: 0.6,
+  surroundStrength: 0.8,
+  coilFollow: 1.0,
+  audioGain: 1.0,
+  animationIntensity: 1.0
+};
 
 function round(v: number, step: number): number {
   const dec = Math.max(0, (String(step).split('.')[1] ?? '').length);

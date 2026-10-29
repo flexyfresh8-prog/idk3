@@ -44,14 +44,31 @@ interface DeformPart {
   count: number;
 }
 
-/** Shared uniforms — every patched material references THESE objects, so a
- *  single write updates all surround meshes (and any highlight clones). */
 interface DeformUniforms {
   uD: { value: number };
   uBulge: { value: number };
 }
 
-const DEFORM_CACHE_KEY = 'idk3-surround-deform-v2';
+/** Deform uniforms are a MODULE-LEVEL SINGLETON, deliberately shared by every
+ *  SurroundDeformer instance. Why instance-owned uniforms break:
+ *
+ *  1. MaterialLibrary caches ONE material instance per kind ('rubber') and it
+ *     OUTLIVES driver hot-swaps — the 10-inch and the 2-inch mini patch the
+ *     very same material object.
+ *  2. Every deformer injects IDENTICAL shader source under the SAME
+ *     customProgramCacheKey. Three.js therefore hits its program cache after
+ *     the first swap: onBeforeCompile is NOT re-run and the cached WebGL
+ *     program keeps referencing the uniforms captured at ITS compile time.
+ *  3. With per-instance uniform objects, that cached program stayed bound to
+ *     the PREVIOUS driver's deformer — which nobody updates anymore — so
+ *     after one hot-swap the surround read frozen uniforms and never moved
+ *     again (the 2-inch mini shipped with exactly this bug).
+ *
+ *  A single shared uniforms object makes program reuse CORRECT: whichever
+ *  deformer is current writes the same objects the GPU program reads. */
+const SHARED_DEFORM_UNIFORMS: DeformUniforms = { uD: { value: 0 }, uBulge: { value: 0 } };
+
+const DEFORM_CACHE_KEY = 'idk3-surround-deform-v3';
 
 export class SurroundDeformer {
   private parts: DeformPart[] = [];
@@ -59,7 +76,6 @@ export class SurroundDeformer {
   private lastD = NaN;
   private lastBulge = NaN;
   private patched = new WeakSet<THREE.Material>();
-  private readonly sharedU: DeformUniforms = { uD: { value: 0 }, uBulge: { value: 0 } };
 
   /** Smooth per-vertex normals derived from triangle winding, returned as a
    *  raw Float32Array. Used instead of BufferGeometry.computeVertexNormals()
@@ -279,7 +295,7 @@ export class SurroundDeformer {
    *  displacement, zero normal change), so even shared materials are safe. */
   patchMaterial(mat: THREE.Material): void {
     if (!mat || this.patched.has(mat) || !('isMeshStandardMaterial' in mat)) return;
-    const shared = this.sharedU;
+    const shared = SHARED_DEFORM_UNIFORMS;
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uD = shared.uD;
       shader.uniforms.uBulge = shared.uBulge;
@@ -326,16 +342,16 @@ export class SurroundDeformer {
     if (dLocal === this.lastD && bulge === this.lastBulge) return;
     this.lastD = dLocal;
     this.lastBulge = bulge;
-    this.sharedU.uD.value = dLocal;
-    this.sharedU.uBulge.value = bulge;
+    SHARED_DEFORM_UNIFORMS.uD.value = dLocal;
+    SHARED_DEFORM_UNIFORMS.uBulge.value = bulge;
   }
 
   /** Current LOCAL-space z bounds of each deformed surround part. Test-hook
    *  replacement for geometry.computeBoundingBox() (which now always sees
    *  rest positions — the deformation lives on the GPU). */
   getDeformedBoundsZ(): Record<number, { min: number; max: number }> {
-    const uD = this.sharedU.uD.value;
-    const uBulge = this.sharedU.uBulge.value;
+    const uD = SHARED_DEFORM_UNIFORMS.uD.value;
+    const uBulge = SHARED_DEFORM_UNIFORMS.uBulge.value;
     const out: Record<number, { min: number; max: number }> = {};
     for (const part of this.parts) {
       const wArr = part.wAttr.array as Float32Array;
@@ -355,15 +371,16 @@ export class SurroundDeformer {
 
   /** Restore the exact rest pose (uniforms → 0; buffers were never touched). */
   reset(): void {
-    this.sharedU.uD.value = 0;
-    this.sharedU.uBulge.value = 0;
+    SHARED_DEFORM_UNIFORMS.uD.value = 0;
+    SHARED_DEFORM_UNIFORMS.uBulge.value = 0;
     this.lastD = 0;
     this.lastBulge = 0;
   }
 
   /** Direct uniform access for automated tests (acceptance test asserts the
-   *  GPU path is actually driven by the physics displacement). */
+   *  GPU path is actually driven by the physics displacement). Returns the
+   *  module singleton — the same objects the GPU program reads. */
   getUniformsForTest(): DeformUniforms {
-    return this.sharedU;
+    return SHARED_DEFORM_UNIFORMS;
   }
 }
